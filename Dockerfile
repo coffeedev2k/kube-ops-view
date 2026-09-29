@@ -47,7 +47,7 @@ RUN poetry export -f requirements.txt --only main -o requirements.txt && \
 
 # Runtime stage - UBI10 minimal image (fewer CVEs)
 # hadolint ignore=DL3007
-FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+FROM registry.access.redhat.com/ubi9/python-312-minimal:latest
 
 WORKDIR /opt/app-root/src
 

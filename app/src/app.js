@@ -1,7 +1,7 @@
 import Tooltip from './tooltip.js'
 import Cluster from './cluster.js'
 import { Pod, ALL_PODS, ALL_SORTS, ALL_STATUS_FILTERS } from './pod.js'
-import SelectBox from './selectbox'
+import SelectBox from './selectbox.js'
 import { Theme, ALL_THEMES } from './themes.js'
 import { DESATURATION_FILTER } from './filters.js'
 import { JSON_delta } from './vendor/json_delta.js'
@@ -484,13 +484,17 @@ export default class App {
     let changes = 0
     const podKeys = new Set()
     for (const cluster of clusters) {
-      for (const node of Object.values(cluster.nodes)) {
-        for (const pod of Object.values(node.pods)) {
-          podKeys.add(cluster.id + '/' + pod.namespace + '/' + pod.name)
+      for (const node of Object.values((cluster && cluster.nodes) || {})) {
+        for (const pod of Object.values((node && node.pods) || {})) {
+          if (pod && pod.namespace && pod.name) {
+            podKeys.add(cluster.id + '/' + pod.namespace + '/' + pod.name)
+          }
         }
       }
-      for (const pod of Object.values(cluster.unassigned_pods)) {
-        podKeys.add(cluster.id + '/' + pod.namespace + '/' + pod.name)
+      for (const pod of Object.values((cluster && cluster.unassigned_pods) || {})) {
+        if (pod && pod.namespace && pod.name) {
+          podKeys.add(cluster.id + '/' + pod.namespace + '/' + pod.name)
+        }
       }
     }
     for (const key of Object.keys(ALL_PODS)) {
@@ -530,7 +534,11 @@ export default class App {
           clusterBox.cluster = cluster
           clusterBox.status = status
         }
-        clusterBox.draw()
+        try {
+          clusterBox.draw()
+        } catch (e) {
+          console.error('Error drawing cluster ' + cluster.id, e)
+        }
         clusterBox.x = 0
         clusterBox.y = y
         y += clusterBox.height + 10

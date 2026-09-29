@@ -6,11 +6,15 @@ import { BRIGHTNESS_FILTER } from './filters.js'
 const ALL_PODS = {}
 
 const showNotReady = (pod) => {
+  if (!pod) {
+    return false
+  }
   if (pod.phase == 'Succeeded') {
     return false
   }
-  for (let index = 0; index < pod.containers.length; index++) {
-    if (!pod.containers[index].ready) {
+  const containers = pod.containers || []
+  for (let index = 0; index < containers.length; index++) {
+    if (!containers[index].ready) {
       return true
     }
   }
@@ -29,34 +33,29 @@ const ALL_STATUS_FILTERS = [
 const sortByName = (a, b) => {
   // https://github.com/hjacobs/kube-ops-view/issues/103
   // *.name might be undefined
-  return (a.name || '').localeCompare(b.name || '')
+  return ((a && a.name) || '').localeCompare((b && b.name) || '')
 }
 
 const sortByAge = (a, b) => {
-  const dateA = new Date(a.startTime)
-  const dateB = new Date(b.startTime)
-  if (dateA.getTime() < dateB.getTime()) {
-    return -1
-  } else if (dateA.getTime() === dateB.getTime())
-    return 0
-  else
-    return 1
+  const timeA = a && a.startTime ? new Date(a.startTime).getTime() : 0
+  const timeB = b && b.startTime ? new Date(b.startTime).getTime() : 0
+  return timeA - timeB
 }
 
 const sortByMemory = (a, b) => {
-  const aMem = podResource('memory')(a.containers, 'usage')
-  const bMem = podResource('memory')(b.containers, 'usage')
+  const aMem = podResource('memory')((a && a.containers) || [], 'usage')
+  const bMem = podResource('memory')((b && b.containers) || [], 'usage')
   return bMem - aMem
 }
 
 const sortByCPU = (a, b) => {
-  const aCpu = podResource('cpu')(a.containers, 'usage')
-  const bCpu = podResource('cpu')(b.containers, 'usage')
+  const aCpu = podResource('cpu')((a && a.containers) || [], 'usage')
+  const bCpu = podResource('cpu')((b && b.containers) || [], 'usage')
   return bCpu - aCpu
 }
 
 const sortByStatus = (a, b) => {
-  return (a.phase).localeCompare(b.phase)
+  return ((a && a.phase) || '').localeCompare((b && b.phase) || '')
 }
 
 

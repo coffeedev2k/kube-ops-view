@@ -1,4 +1,4 @@
-import App from './app'
+import App from './app.js'
 import * as PIXI from 'pixi.js'
 
 export default class SelectBox extends PIXI.Graphics {

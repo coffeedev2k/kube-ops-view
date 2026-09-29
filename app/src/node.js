@@ -1,11 +1,12 @@
 import { Pod } from './pod.js'
 import Bars from './bars.js'
 import { parseResource } from './utils.js'
-import App from './app'
+import App from './app.js'
 import * as PIXI from 'pixi.js'
 
 
 export const isMaster = (labels) => {
+  if (!labels) return false
   for (var key in labels) {
     if (key == 'node-role.kubernetes.io/master' ||
       key == 'node-role.kubernetes.io/control-plane' ||
@@ -48,6 +49,7 @@ export const POOL_COLORS = {
  * @returns {string} - Pool type name (e.g., 'master', 'infra', 'worker')
  */
 export const getNodePoolType = (labels) => {
+  if (!labels) return 'worker'
   const poolTypes = []
 
   for (const key in labels) {
@@ -68,6 +70,10 @@ export const getNodePoolType = (labels) => {
     }
     // Custom pool label patterns
     else if (key === 'node-pool' || key === 'nodepool' || key === 'pool') {
+      poolTypes.push(labels[key])
+    }
+    // Karpenter node pool
+    else if (key === 'karpenter.sh/nodepool' || key === 'karpenter.sh/provisioner-name') {
       poolTypes.push(labels[key])
     }
     // GKE node pool
@@ -107,6 +113,7 @@ export const getNodePoolType = (labels) => {
  * @returns {string[]} - Array of pool type names
  */
 export const getAllNodePoolTypes = (labels) => {
+  if (!labels) return ['worker']
   const poolTypes = []
 
   for (const key in labels) {
@@ -115,6 +122,8 @@ export const getAllNodePoolTypes = (labels) => {
       if (role && role !== '') {
         poolTypes.push(role)
       }
+    } else if (key === 'karpenter.sh/nodepool' || key === 'karpenter.sh/provisioner-name') {
+      poolTypes.push(labels[key])
     }
   }
 
@@ -138,6 +147,7 @@ export const getPoolColor = (poolType) => {
  * @returns {string} - AZ name (e.g., 'us-east-1a', 'zone-1') or 'unknown' if not found
  */
 export const getNodeAZ = (labels) => {
+  if (!labels) return 'unknown'
   // Standard Kubernetes topology label (preferred)
   if (labels['topology.kubernetes.io/zone']) {
     return labels['topology.kubernetes.io/zone']
@@ -180,32 +190,58 @@ export class Node extends PIXI.Graphics {
   }
 
   getResourceUsage() {
-    const resources = {}
-    for (const key of Object.keys(this.node.status.capacity)) {
+    const resources = {
+      'cpu': { 'capacity': 0, 'reserved': 0, 'requested': 0, 'used': 0 },
+      'memory': { 'capacity': 0, 'reserved': 0, 'requested': 0, 'used': 0 },
+      'pods': { 'capacity': 0, 'reserved': 0, 'requested': 0, 'used': 0 }
+    }
+    const status = this.node && this.node.status
+    const capacity = (status && status.capacity) || {}
+    const allocatable = (status && status.allocatable) || {}
+
+    for (const key of Object.keys(capacity)) {
       resources[key] = {
-        'capacity': parseResource(this.node.status.capacity[key]),
+        'capacity': parseResource(capacity[key]),
         'reserved': 0,
         'requested': 0,
         'used': 0
       }
-      const allocatable = this.node.status.allocatable[key]
-      if (allocatable) {
-        resources[key]['reserved'] = resources[key]['capacity'] - parseResource(allocatable)
+      const alloc = allocatable[key]
+      if (alloc !== undefined && alloc !== null) {
+        resources[key]['reserved'] = Math.max(0, resources[key]['capacity'] - parseResource(alloc))
       }
     }
-    if (this.node.usage) {
+    if (this.node && this.node.usage) {
       for (const key of Object.keys(this.node.usage)) {
+        if (!resources[key]) {
+          resources[key] = {
+            'capacity': 0,
+            'reserved': 0,
+            'requested': 0,
+            'used': 0
+          }
+        }
         resources[key]['used'] = parseResource(this.node.usage[key])
       }
     }
     let numberOfPods = 0
-    for (const pod of Object.values(this.node.pods)) {
+    const pods = (this.node && this.node.pods) ? Object.values(this.node.pods) : []
+    for (const pod of pods) {
+      if (!pod) continue
       numberOfPods++
       // do not account for completed jobs
-      if (pod.phase != 'Succeeded') {
-        for (const container of pod.containers) {
-          if (container.resources && container.resources.requests) {
+      if (pod.phase !== 'Succeeded') {
+        for (const container of (pod.containers || [])) {
+          if (container && container.resources && container.resources.requests) {
             for (const key of Object.keys(container.resources.requests)) {
+              if (!resources[key]) {
+                resources[key] = {
+                  'capacity': 0,
+                  'reserved': 0,
+                  'requested': 0,
+                  'used': 0
+                }
+              }
               resources[key].requested += parseResource(container.resources.requests[key])
             }
           }
@@ -226,8 +262,10 @@ export class Node extends PIXI.Graphics {
     topHandle.rect(0, 0, this.widthOfNodePx, App.current.heightOfTopHandlePx)
     topHandle.fill({ color: handleColor })
 
+    const labels = (this.node && this.node.labels) || {}
+
     // Check for multiple roles
-    const allRoles = getAllNodePoolTypes(this.node.labels)
+    const allRoles = getAllNodePoolTypes(labels)
     const hasMultipleRoles = allRoles.length > 1
 
     // there is about 2.83 letters per pod
@@ -235,7 +273,8 @@ export class Node extends PIXI.Graphics {
     // Reserve space for multi-role indicator if needed
     const indicatorWidth = hasMultipleRoles ? 14 : 0
     const availableTextRoom = roomForText - (indicatorWidth > 0 ? 3 : 0)
-    const ellipsizedNodeName = this.node.name.length > availableTextRoom ? this.node.name.substring(0, availableTextRoom).concat('…') : this.node.name
+    const nodeName = (this.node && this.node.name) || ''
+    const ellipsizedNodeName = nodeName.length > availableTextRoom ? nodeName.substring(0, availableTextRoom).concat('…') : nodeName
     const text = new PIXI.Text({ text: ellipsizedNodeName, style: { fontFamily: 'ShareTechMono', fontSize: 10, fill: 0x000000 } })
     text.x = 2
     text.y = 2
@@ -266,15 +305,16 @@ export class Node extends PIXI.Graphics {
     nodeBox.stroke({ width: 2, color: handleColor })
     topHandle.interactive = true
     topHandle.on('mouseover', function () {
-      let s = nodeBox.node.name
+      const nodeLabels = (nodeBox.node && nodeBox.node.labels) || {}
+      let s = (nodeBox.node && nodeBox.node.name) || ''
       // Show pool type and AZ prominently
-      const allPoolTypes = getAllNodePoolTypes(nodeBox.node.labels)
-      const az = getNodeAZ(nodeBox.node.labels)
+      const allPoolTypes = getAllNodePoolTypes(nodeLabels)
+      const az = getNodeAZ(nodeLabels)
       s += '\nPool: ' + allPoolTypes.join(', ')
       s += '\nAZ: ' + az
       s += '\nLabels:'
-      for (const key of Object.keys(nodeBox.node.labels).sort()) {
-        s += '\n  ' + key + ': ' + nodeBox.node.labels[key]
+      for (const key of Object.keys(nodeLabels).sort()) {
+        s += '\n  ' + key + ': ' + nodeLabels[key]
       }
       nodeBox.tooltip.setText(s)
       nodeBox.tooltip.position = nodeBox.toGlobal(new PIXI.Point(0, App.current.heightOfTopHandlePx))
@@ -286,7 +326,9 @@ export class Node extends PIXI.Graphics {
     if (App.current.config.nodeLinkUrlTemplate !== null) {
       topHandle.cursor = 'pointer'
       topHandle.on('click', function () {
-        location.href = App.current.config.nodeLinkUrlTemplate.replace('{cluster}', nodeBox.cluster.cluster.id).replace('{name}', nodeBox.node.name)
+        const clusterId = (nodeBox.cluster && nodeBox.cluster.cluster && nodeBox.cluster.cluster.id) || ''
+        const name = (nodeBox.node && nodeBox.node.name) || ''
+        location.href = App.current.config.nodeLinkUrlTemplate.replace('{cluster}', clusterId).replace('{name}', name)
       })
     }
     const resources = this.getResourceUsage()
@@ -305,8 +347,9 @@ export class Node extends PIXI.Graphics {
     const py = App.current.heightOfTopHandlePx + 5
     let podsCounter = 0
     let podsKubeSystemCounter = 0
-    const pods = Object.values(this.node.pods).sort(sorterFn)
+    const pods = Object.values((this.node && this.node.pods) || {}).sort(sorterFn)
     for (const pod of pods) {
+      if (!pod) continue
       if (pod.namespace != 'kube-system') {
         const podBox = Pod.getOrCreate(pod, this.cluster, this.tooltip)
         podBox.movePodTo(

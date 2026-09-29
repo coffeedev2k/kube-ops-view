@@ -33,9 +33,12 @@ export default class Cluster extends PIXI.Graphics {
     const pools = {}
 
     // First pass: group nodes by pool type and AZ, find max pods per pool
-    for (const node of Object.values(this.cluster.nodes)) {
-      const poolType = getNodePoolType(node.labels)
-      const az = getNodeAZ(node.labels)
+    const nodes = (this.cluster && this.cluster.nodes) ? Object.values(this.cluster.nodes) : []
+    for (const node of nodes) {
+      if (!node) continue
+      const labels = node.labels || {}
+      const poolType = getNodePoolType(labels)
+      const az = getNodeAZ(labels)
 
       if (!pools[poolType]) {
         pools[poolType] = {
@@ -54,7 +57,7 @@ export default class Cluster extends PIXI.Graphics {
       }
       pools[poolType].azGroups[az].push(node)
 
-      const podsInNode = Object.values(node.pods).length
+      const podsInNode = Object.values(node.pods || {}).length
       if (podsInNode > pools[poolType].maxPods) {
         pools[poolType].maxPods = podsInNode
       }
@@ -81,7 +84,7 @@ export default class Cluster extends PIXI.Graphics {
 
       // Sort nodes within each AZ group by name
       for (const az in pool.azGroups) {
-        pool.azGroups[az].sort((a, b) => a.name.localeCompare(b.name))
+        pool.azGroups[az].sort((a, b) => ((a && a.name) || '').localeCompare((b && b.name) || ''))
       }
 
       // Store sorted AZ names for consistent rendering
@@ -210,13 +213,17 @@ export default class Cluster extends PIXI.Graphics {
           const col = nodeIdx % nodesPerRowInAZ
           const row = Math.floor(nodeIdx / nodesPerRowInAZ)
 
-          const nodeBox = new Node(node, this, this.tooltip, pool.podsPerRow, pool.widthPx, pool.heightPx, poolColor)
-          nodeBox.draw()
+          try {
+            const nodeBox = new Node(node, this, this.tooltip, pool.podsPerRow, pool.widthPx, pool.heightPx, poolColor)
+            nodeBox.draw()
 
-          nodeBox.x = azStartX + col * (pool.widthPx + padding)
-          nodeBox.y = poolStartY + row * (pool.heightPx + padding)
+            nodeBox.x = azStartX + col * (pool.widthPx + padding)
+            nodeBox.y = poolStartY + row * (pool.heightPx + padding)
 
-          this.addChild(nodeBox)
+            this.addChild(nodeBox)
+          } catch (e) {
+            console.error('Failed to draw node ' + (node && node.name) + ':', e)
+          }
         }
 
         // Calculate the height of this AZ's grid
@@ -245,13 +252,18 @@ export default class Cluster extends PIXI.Graphics {
     let unassignedX = overallMaxX + left  // Consistent spacing
     const unassignedY = top + poolHeaderHeight + 2
 
-    for (const pod of Object.values(this.cluster.unassigned_pods)) {
-      const podBox = Pod.getOrCreate(pod, this, this.tooltip)
-      podBox.x = unassignedX
-      podBox.y = unassignedY
-      podBox.draw()
-      this.addChild(podBox)
-      unassignedX += 20
+    const unassignedPods = (this.cluster && this.cluster.unassigned_pods) ? Object.values(this.cluster.unassigned_pods) : []
+    for (const pod of unassignedPods) {
+      try {
+        const podBox = Pod.getOrCreate(pod, this, this.tooltip)
+        podBox.x = unassignedX
+        podBox.y = unassignedY
+        podBox.draw()
+        this.addChild(podBox)
+        unassignedX += 20
+      } catch (e) {
+        console.error('Failed to draw unassigned pod:', e)
+      }
     }
 
     // Update overall width if unassigned pods extend it

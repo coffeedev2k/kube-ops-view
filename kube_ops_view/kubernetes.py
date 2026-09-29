@@ -31,29 +31,38 @@ class PodMetrics(NamespacedAPIObject):
 
 
 def map_node_status(status: dict):
+    if not status:
+        return {
+            "addresses": [],
+            "capacity": {},
+            "allocatable": {},
+        }
     return {
-        "addresses": status.get("addresses"),
-        "capacity": status.get("capacity"),
-        "allocatable": status.get("allocatable"),
+        "addresses": status.get("addresses") or [],
+        "capacity": status.get("capacity") or {},
+        "allocatable": status.get("allocatable") or {},
     }
 
 
 def map_node(node: dict):
+    metadata = node.get("metadata", {})
     return {
-        "name": node["metadata"]["name"],
-        "labels": node["metadata"]["labels"],
-        "status": map_node_status(node["status"]),
+        "name": metadata.get("name", ""),
+        "labels": metadata.get("labels") or {},
+        "status": map_node_status(node.get("status") or {}),
         "pods": {},
     }
 
 
 def map_pod(pod: dict):
+    metadata = pod.get("metadata", {})
+    status = pod.get("status") or {}
     return {
-        "name": pod["metadata"]["name"],
-        "namespace": pod["metadata"]["namespace"],
-        "labels": pod["metadata"].get("labels", {}),
-        "phase": pod["status"].get("phase"),
-        "startTime": pod["status"]["startTime"] if "startTime" in pod["status"] else "",
+        "name": metadata.get("name", ""),
+        "namespace": metadata.get("namespace", ""),
+        "labels": metadata.get("labels") or {},
+        "phase": status.get("phase"),
+        "startTime": status.get("startTime", ""),
         "containers": [],
     }
 
@@ -123,7 +132,8 @@ def query_kubernetes_cluster(cluster):
     try:
         for node_metrics in NodeMetrics.objects(cluster.client):
             key = node_metrics.name
-            nodes[key]["usage"] = node_metrics.obj.get("usage", {})
+            if key in nodes:
+                nodes[key]["usage"] = node_metrics.obj.get("usage", {})
     except Exception as e:
         logger.warning(
             "Failed to query node metrics {}: {}".format(
