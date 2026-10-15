@@ -111,6 +111,51 @@ export default class Cluster extends PIXI.Graphics {
     })
   }
 
+  /**
+   * Creates the "collapse all" checkbox for the cluster top handle
+   * Checked: all pools collapsed; dash: some pools collapsed; empty: no pools collapsed
+   * Click on checked box expands all pools, click on other states collapses all pools
+   * @returns {PIXI.Graphics} - Control with hitArea that covers the box and the label
+   */
+  createCollapseAllControl(clusterId, poolTypes, collapsedPoolCount) {
+    const allCollapsed = collapsedPoolCount === poolTypes.length
+    const control = new PIXI.Graphics()
+    control.allowChildren = true
+    control.interactive = true
+    control.cursor = 'pointer'
+
+    const box = new PIXI.Graphics()
+    box.rect(0, 3, 9, 9)
+    box.fill({ color: 0xffffff, alpha: 0.6 })
+    box.stroke({ width: 1, color: 0x000000 })
+    control.addChild(box)
+
+    const mark = new PIXI.Graphics()
+    if (allCollapsed) {
+      mark.moveTo(2, 7.5)
+      mark.lineTo(4, 10)
+      mark.lineTo(7.5, 4.5)
+      mark.stroke({ width: 1.5, color: 0x000000 })
+    } else if (collapsedPoolCount > 0) {
+      mark.rect(2, 7, 5, 1)
+      mark.fill({ color: 0x000000 })
+    }
+    control.addChild(mark)
+
+    const label = new PIXI.Text({ text: 'collapse all', style: { fontFamily: 'ShareTechMono', fontSize: 10, fill: 0x000000 } })
+    label.x = 12
+    label.y = 2
+    control.addChild(label)
+    control.hitArea = new PIXI.Rectangle(0, 0, label.x + label.width, App.current.heightOfTopHandlePx)
+
+    control.on('click', (e) => {
+      // do not let the top handle toggle the cluster selection
+      e.stopPropagation()
+      App.current.setClusterPoolsCollapsed(clusterId, poolTypes, !allCollapsed)
+    })
+    return control
+  }
+
   draw() {
     this.removeChildren()
     this.clear()
@@ -126,11 +171,61 @@ export default class Cluster extends PIXI.Graphics {
     // Group nodes by pool type and AZ
     const pools = this.groupNodesByPool()
     const sortedPoolTypes = this.sortPoolTypes(Object.keys(pools))
+    const clusterId = (this.cluster && this.cluster.id) || ''
+    const collapsedPoolCount = sortedPoolTypes.filter(poolType => App.current.isPoolCollapsed(clusterId, poolType)).length
+
+    // Create top handle content first: its width sets the minimal cluster width
+    const handleText = new PIXI.Text({ text: ''.concat(this.cluster.api_server_url, ' (', this.cluster.id, ')'), style: { fontFamily: 'ShareTechMono', fontSize: 10, fill: 0x000000 } })
+    handleText.x = 2
+    handleText.y = 2
+    const collapseAllControl = sortedPoolTypes.length > 0
+      ? this.createCollapseAllControl(clusterId, sortedPoolTypes, collapsedPoolCount)
+      : null
+    const minClusterWidth = Math.max(250, handleText.width + 4 + (collapseAllControl ? collapseAllControl.hitArea.width + 16 : 0))
 
     let currentY = top
     let overallMaxX = left
     const poolHeaders = []
     const azHeaders = []
+
+    // Place unassigned pods first, above all pools: they stay visible when pools are collapsed
+    const unassignedPods = (this.cluster && this.cluster.unassigned_pods) ? Object.values(this.cluster.unassigned_pods) : []
+    if (unassignedPods.length > 0) {
+      // Wrap the pod rows at the width of the widest expanded pool
+      let expandedPoolsWidth = 0
+      for (const poolType of sortedPoolTypes) {
+        if (App.current.isPoolCollapsed(clusterId, poolType)) continue
+        const pool = pools[poolType]
+        let poolWidth = -azColumnPadding
+        for (const az of pool.sortedAZs) {
+          const azCols = Math.min(nodesPerRowInAZ, pool.azGroups[az].length)
+          poolWidth += azCols * (pool.widthPx + padding) - padding + azColumnPadding
+        }
+        expandedPoolsWidth = Math.max(expandedPoolsWidth, poolWidth)
+      }
+      const contentWidth = Math.max(minClusterWidth - left * 2, expandedPoolsWidth)
+      const unassignedStepX = 20
+      const unassignedStepY = 15
+      const unassignedPodSize = 10
+      const unassignedPerRow = Math.max(1, Math.floor((contentWidth - unassignedPodSize) / unassignedStepX) + 1)
+
+      unassignedPods.forEach((pod, index) => {
+        try {
+          const podBox = Pod.getOrCreate(pod, this, this.tooltip)
+          podBox.x = left + (index % unassignedPerRow) * unassignedStepX
+          podBox.y = currentY + Math.floor(index / unassignedPerRow) * unassignedStepY
+          podBox.draw()
+          this.addChild(podBox)
+        } catch (e) {
+          console.error('Failed to draw unassigned pod:', e)
+        }
+      })
+
+      const unassignedRows = Math.ceil(unassignedPods.length / unassignedPerRow)
+      const unassignedCols = Math.min(unassignedPods.length, unassignedPerRow)
+      overallMaxX = Math.max(overallMaxX, left + (unassignedCols - 1) * unassignedStepX + unassignedPodSize)
+      currentY += unassignedRows * unassignedStepY + 5
+    }
 
     // Render each pool as a separate row
     for (const poolType of sortedPoolTypes) {
@@ -144,7 +239,6 @@ export default class Cluster extends PIXI.Graphics {
         totalNodesInPool += pool.azGroups[az].length
       }
 
-      const clusterId = (this.cluster && this.cluster.id) || ''
       const isCollapsed = App.current ? App.current.isPoolCollapsed(clusterId, poolType) : false
 
       // Add pool header/label (rect drawn later with correct width)
@@ -300,32 +394,8 @@ export default class Cluster extends PIXI.Graphics {
       currentY = poolStartY + poolMaxHeight + 5  // Extra spacing between pools
     }
 
-    // Place unassigned pods
-    let unassignedX = overallMaxX + left  // Consistent spacing
-    const unassignedY = top + poolHeaderHeight + 2
-
-    const unassignedPods = (this.cluster && this.cluster.unassigned_pods) ? Object.values(this.cluster.unassigned_pods) : []
-    for (const pod of unassignedPods) {
-      try {
-        const podBox = Pod.getOrCreate(pod, this, this.tooltip)
-        podBox.x = unassignedX
-        podBox.y = unassignedY
-        podBox.draw()
-        this.addChild(podBox)
-        unassignedX += 20
-      } catch (e) {
-        console.error('Failed to draw unassigned pod:', e)
-      }
-    }
-
-    // Update overall width if unassigned pods extend it
-    if (unassignedX > overallMaxX) {
-      overallMaxX = unassignedX
-    }
-
     // Draw pool header rects at correct width (after all content is positioned)
     // Add +2 to account for node 2px stroke extending 1px outward on each side
-    const minClusterWidth = 250
     const poolHeaderWidth = Math.max(minClusterWidth - left * 2, overallMaxX - left) + 2
     for (const { header, color } of poolHeaders) {
       header.rect(-1, 0, poolHeaderWidth, poolHeaderHeight)
@@ -340,9 +410,7 @@ export default class Cluster extends PIXI.Graphics {
     }
 
     // Draw cluster border (add right padding equal to left)
-    const minClusterHeight = unassignedPods.length > 0
-      ? (unassignedY + 25)
-      : (top + App.current.heightOfTopHandlePx + 15)
+    const minClusterHeight = top + App.current.heightOfTopHandlePx + 15
     const width = Math.max(minClusterWidth, overallMaxX + left)
     const height = Math.max(minClusterHeight, currentY - padding)
     this.rect(0, 0, width, height)
@@ -359,10 +427,11 @@ export default class Cluster extends PIXI.Graphics {
     topHandle.on('click', function (_event) {
       App.current.toggleCluster(that.cluster.id)
     })
-    const text = new PIXI.Text({ text: ''.concat(this.cluster.api_server_url, ' (', this.cluster.id, ')'), style: { fontFamily: 'ShareTechMono', fontSize: 10, fill: 0x000000 } })
-    text.x = 2
-    text.y = 2
-    topHandle.addChild(text)
+    topHandle.addChild(handleText)
+    if (collapseAllControl) {
+      collapseAllControl.x = width - collapseAllControl.hitArea.width - 6
+      topHandle.addChild(collapseAllControl)
+    }
     this.addChild(topHandle)
 
     // Handle stale data pulsating

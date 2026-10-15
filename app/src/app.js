@@ -678,10 +678,27 @@ export default class App {
         this.collapsedPools.add(key)
       }
     }
+    this.saveCollapsedPools()
+    this.update()
+  }
+
+  setClusterPoolsCollapsed(clusterId, poolTypes, collapsed) {
+    for (const poolType of poolTypes) {
+      if (collapsed) {
+        this.collapsedPools.add(clusterId + ':' + poolType)
+      } else {
+        this.collapsedPools.delete(clusterId + ':' + poolType)
+        this.collapsedPools.delete(poolType)
+      }
+    }
+    this.saveCollapsedPools()
+    this.update()
+  }
+
+  saveCollapsedPools() {
     localStorage.setItem('collapsedPools', JSON.stringify(Array.from(this.collapsedPools)))
     const collapsedStr = Array.from(this.collapsedPools).join(',')
     this.changeLocationHash('collapsed', collapsedStr || null)
-    this.update()
   }
 
   keepAlive() {
