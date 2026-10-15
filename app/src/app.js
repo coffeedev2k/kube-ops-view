@@ -20,7 +20,7 @@ export default class App {
     this.config.podLinkUrlTemplate = config['pod_link_url_template']
     this.config.route_prefix = config['route_prefix']
 
-    this.filterString = (params.get('q') && decodeURIComponent(params.get('q'))) || ''
+    this.filterString = params.get('q') || ''
     this.selectedClusters = new Set((params.get('clusters') || '').split(',').filter(x => x))
     this.seenPods = new Set()
 
@@ -33,6 +33,24 @@ export default class App {
     this.statusFilterFn = ALL_STATUS_FILTERS[indexStatusFilterFn].value
 
     this.theme = Theme.get(localStorage.getItem('theme'))
+
+    // collapsed pools filter
+    const collapsedParam = params.get('collapsed')
+    if (collapsedParam !== null && collapsedParam !== undefined) {
+      this.collapsedPools = new Set(collapsedParam.split(',').filter(x => x))
+    } else {
+      const stored = localStorage.getItem('collapsedPools')
+      if (stored) {
+        try {
+          this.collapsedPools = new Set(JSON.parse(stored))
+        } catch {
+          this.collapsedPools = new Set()
+        }
+      } else {
+        this.collapsedPools = new Set()
+      }
+    }
+
     this.eventSource = null
     this.connectTime = null
     this.keepAliveTimer = null
@@ -49,14 +67,28 @@ export default class App {
     this.heightOfTopHandlePx = 15
   }
 
+  decodeHashValue(raw) {
+    // Older builds re-encoded every value on each update ('%' -> '%25' -> '%2525' ...),
+    // so collapse the nested '%25' layers before the single decode.
+    const collapsed = raw.replace(/%25(?:25)*/gi, '%')
+    for (const candidate of [collapsed, raw]) {
+      try {
+        return decodeURIComponent(candidate)
+      } catch {
+        // malformed escape sequence, try the next candidate
+      }
+    }
+    return raw
+  }
+
   parseLocationHash() {
-    // hash startswith #
+    // hash startswith #; returns decoded values
     const hash = document.location.hash.substring(1)
     const params = new Map()
     for (const pair of hash.split(';')) {
-      const keyValue = pair.split('=', 2)
-      if (keyValue.length == 2) {
-        params.set(keyValue[0], keyValue[1])
+      const separatorIndex = pair.indexOf('=')
+      if (separatorIndex > 0) {
+        params.set(pair.substring(0, separatorIndex), this.decodeHashValue(pair.substring(separatorIndex + 1)))
       }
     }
     return params
@@ -72,7 +104,12 @@ export default class App {
       }
     }
 
-    document.location.hash = '#' + pairs.sort().join(';')
+    const hash = '#' + pairs.sort().join(';')
+    if (hash === document.location.hash || (hash === '#' && !document.location.hash)) {
+      return
+    }
+    // replaceState: view state changes on every update, do not add browser history entries
+    window.history.replaceState(window.history.state, '', hash)
   }
 
   nameMatches(pod, searchString) {
@@ -613,6 +650,37 @@ export default class App {
     this.changeLocationHash('clusters', Array.from(this.selectedClusters).join(','))
     // make sure we are updating our EventSource filter
     this.connect()
+    this.update()
+  }
+
+  isPoolCollapsed(clusterId, poolType) {
+    return this.collapsedPools.has(clusterId + ':' + poolType) || this.collapsedPools.has(poolType)
+  }
+
+  togglePoolCollapse(clusterId, poolType, allClusters = false) {
+    const key = clusterId + ':' + poolType
+    const isCurrentlyCollapsed = this.isPoolCollapsed(clusterId, poolType)
+    if (allClusters) {
+      for (const cid of this.clusters.keys()) {
+        const cKey = cid + ':' + poolType
+        if (isCurrentlyCollapsed) {
+          this.collapsedPools.delete(cKey)
+          this.collapsedPools.delete(poolType)
+        } else {
+          this.collapsedPools.add(cKey)
+        }
+      }
+    } else {
+      if (isCurrentlyCollapsed) {
+        this.collapsedPools.delete(key)
+        this.collapsedPools.delete(poolType)
+      } else {
+        this.collapsedPools.add(key)
+      }
+    }
+    localStorage.setItem('collapsedPools', JSON.stringify(Array.from(this.collapsedPools)))
+    const collapsedStr = Array.from(this.collapsedPools).join(',')
+    this.changeLocationHash('collapsed', collapsedStr || null)
     this.update()
   }
 

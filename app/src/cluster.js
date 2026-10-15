@@ -144,20 +144,72 @@ export default class Cluster extends PIXI.Graphics {
         totalNodesInPool += pool.azGroups[az].length
       }
 
+      const clusterId = (this.cluster && this.cluster.id) || ''
+      const isCollapsed = App.current ? App.current.isPoolCollapsed(clusterId, poolType) : false
+
       // Add pool header/label (rect drawn later with correct width)
       const poolHeader = new PIXI.Graphics()
       poolHeader.allowChildren = true
+      poolHeader.interactive = true
+      poolHeader.cursor = 'pointer'
+      const thisPoolType = poolType
+      poolHeader.on('pointerdown', (e) => {
+        if (e && e.stopPropagation) e.stopPropagation()
+        const allClusters = !!(e && (e.altKey || e.shiftKey))
+        App.current.togglePoolCollapse(clusterId, thisPoolType, allClusters)
+      })
+      const clusterInstance = this
+      poolHeader.on('mouseover', () => {
+        if (clusterInstance.tooltip) {
+          const actionText = isCollapsed ? 'expand' : 'collapse'
+          clusterInstance.tooltip.setText(`Click to ${actionText} ${thisPoolType.toUpperCase()} pool`)
+          clusterInstance.tooltip.position = poolHeader.toGlobal(new PIXI.Point(0, poolHeaderHeight))
+          clusterInstance.tooltip.visible = true
+        }
+        poolHeader.alpha = 0.8
+      })
+      poolHeader.on('mouseout', () => {
+        if (clusterInstance.tooltip) {
+          clusterInstance.tooltip.visible = false
+        }
+        poolHeader.alpha = 1.0
+      })
+
+      // Draw the collapse/expand triangle icon on the header
+      const triangle = new PIXI.Graphics()
+      if (isCollapsed) {
+        // Triangle pointing RIGHT ▶
+        triangle.moveTo(6, 4)
+        triangle.lineTo(12, 8)
+        triangle.lineTo(6, 12)
+        triangle.closePath()
+        triangle.fill({ color: 0xffffff, alpha: 0.9 })
+      } else {
+        // Triangle pointing DOWN ▼
+        triangle.moveTo(5, 5)
+        triangle.lineTo(13, 5)
+        triangle.lineTo(9, 11)
+        triangle.closePath()
+        triangle.fill({ color: 0xffffff, alpha: 0.9 })
+      }
+      poolHeader.addChild(triangle)
 
       const poolLabel = new PIXI.Text({
         text: `${poolType.toUpperCase()} (${totalNodesInPool})`,
         style: { fontFamily: 'ShareTechMono', fontSize: 10, fill: 0xffffff }
       })
-      poolLabel.x = 4
+      poolLabel.x = 18
       poolLabel.y = 2
       poolHeader.addChild(poolLabel)
       poolHeader.y = currentY
       poolHeader.x = left
       poolHeaders.push({ header: poolHeader, color: poolColor })
+
+      if (isCollapsed) {
+        // Advance currentY past the header row and skip nodes
+        currentY += poolHeaderHeight + 4
+        continue
+      }
 
       currentY += poolHeaderHeight + 2
 
@@ -273,7 +325,8 @@ export default class Cluster extends PIXI.Graphics {
 
     // Draw pool header rects at correct width (after all content is positioned)
     // Add +2 to account for node 2px stroke extending 1px outward on each side
-    const poolHeaderWidth = overallMaxX - left + 2
+    const minClusterWidth = 250
+    const poolHeaderWidth = Math.max(minClusterWidth - left * 2, overallMaxX - left) + 2
     for (const { header, color } of poolHeaders) {
       header.rect(-1, 0, poolHeaderWidth, poolHeaderHeight)
       header.fill({ color: color, alpha: 0.3 })
@@ -287,8 +340,11 @@ export default class Cluster extends PIXI.Graphics {
     }
 
     // Draw cluster border (add right padding equal to left)
-    const width = overallMaxX + left
-    const height = currentY - padding
+    const minClusterHeight = unassignedPods.length > 0
+      ? (unassignedY + 25)
+      : (top + App.current.heightOfTopHandlePx + 15)
+    const width = Math.max(minClusterWidth, overallMaxX + left)
+    const height = Math.max(minClusterHeight, currentY - padding)
     this.rect(0, 0, width, height)
     this.stroke({ width: 2, color: App.current.theme.primaryColor })
 
