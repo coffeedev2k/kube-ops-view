@@ -194,9 +194,14 @@ async fn update_cluster(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::store::StoreMessage;
+
+    /// One update round for the mock clusters (query interval 0: always query).
+    pub async fn update_mock_clusters(store: &Store) {
+        update_all(&ClusterDiscoverer::mock(), ClusterQuery::Mock, store, 0.0).await;
+    }
 
     #[test]
     fn backoff_grows_and_is_capped() {

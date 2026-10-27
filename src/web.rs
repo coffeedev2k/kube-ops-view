@@ -9,10 +9,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::Router;
+use axum::body::{Body, Bytes};
 use axum::extract::{ConnectInfo, FromRef, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum_extra::extract::cookie::{Cookie, Key, SameSite, SignedCookieJar};
@@ -201,6 +201,18 @@ struct EventsParams {
     cluster_ids: String,
 }
 
+/// One SSE frame, same bytes as the Python version: `event: <type>\ndata: <data>\n\n`.
+///
+/// `data` must not contain line breaks (compact JSON has none). An empty `data` still gives
+/// a `data:` line: without it, the browser EventSource does not dispatch the event.
+fn sse_frame(event_type: &str, data: &str) -> Bytes {
+    debug_assert!(!data.contains(['\n', '\r']), "SSE data must be one line");
+    Bytes::from(format!("event: {event_type}\ndata: {data}\n\n"))
+}
+
+/// SSE comment line: keeps proxies from closing an idle connection; EventSource ignores it.
+const SSE_KEEP_ALIVE_FRAME: &[u8] = b":\n\n";
+
 /// SSE (Server-Sent Events) stream for the UI EventSource.
 ///
 /// First the full data of each cluster (`clusterstatus`, `clusterupdate`), then `bootstrapend`,
@@ -213,34 +225,35 @@ async fn events(State(state): State<AppState>, Query(params): Query<EventsParams
         .map(str::to_string)
         .collect();
     let headers = [
+        (
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/event-stream"),
+        ),
         (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
         (
             header::HeaderName::from_static("x-accel-buffering"),
             HeaderValue::from_static("no"),
         ),
     ];
-    let stream = event_stream(state.store.clone(), cluster_ids);
-    (
-        headers,
-        Sse::new(stream).keep_alive(KeepAlive::new().interval(SSE_KEEP_ALIVE)),
-    )
-        .into_response()
+    let stream = event_stream(state.store.clone(), cluster_ids, SSE_KEEP_ALIVE);
+    (headers, Body::from_stream(stream)).into_response()
 }
 
 fn event_stream(
     store: Arc<Store>,
     cluster_ids: HashSet<String>,
-) -> impl Stream<Item = Result<Event, Infallible>> {
-    let (tx, rx) = tokio::sync::mpsc::channel::<Event>(64);
+    keep_alive: Duration,
+) -> impl Stream<Item = Result<Bytes, Infallible>> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(64);
     tokio::spawn(async move {
         // subscribe before the bootstrap read, so no event between bootstrap and live stream is lost
         let mut live = store.subscribe();
         let wanted = |id: &str| cluster_ids.is_empty() || cluster_ids.contains(id);
 
-        match bootstrap_events(&store, &wanted).await {
-            Ok(events) => {
-                for event in events {
-                    if tx.send(event).await.is_err() {
+        match bootstrap_frames(&store, &wanted).await {
+            Ok(frames) => {
+                for frame in frames {
+                    if tx.send(frame).await.is_err() {
                         return;
                     }
                 }
@@ -250,51 +263,48 @@ fn event_stream(
                 return;
             }
         }
-        if tx
-            .send(Event::default().event("bootstrapend").data(""))
-            .await
-            .is_err()
-        {
+        if tx.send(sse_frame("bootstrapend", "")).await.is_err() {
             return;
         }
 
+        let mut keep_alive_timer = tokio::time::interval(keep_alive);
+        keep_alive_timer.reset();
         loop {
-            match live.recv().await {
-                Ok(StoreMessage::Event(e)) => {
-                    if !cluster_ids.is_empty() && !e.cluster_id.as_deref().is_some_and(wanted) {
-                        continue;
+            let frame = tokio::select! {
+                _ = keep_alive_timer.tick() => Bytes::from_static(SSE_KEEP_ALIVE_FRAME),
+                message = live.recv() => match message {
+                    Ok(StoreMessage::Event(e)) => {
+                        if !cluster_ids.is_empty() && !e.cluster_id.as_deref().is_some_and(wanted) {
+                            continue;
+                        }
+                        sse_frame(&e.event_type, &e.data_json)
                     }
-                    let event = Event::default().event(&e.event_type).data(&e.data_json);
-                    if tx.send(event).await.is_err() {
-                        return; // client disconnected
+                    Ok(StoreMessage::Resync) => {
+                        info!("Event stream had a gap, close the client stream so that the UI reconnects");
+                        return;
                     }
-                }
-                Ok(StoreMessage::Resync) => {
-                    info!(
-                        "Event stream had a gap, close the client stream so that the UI reconnects"
-                    );
-                    return;
-                }
-                Err(RecvError::Lagged(n)) => {
-                    warn!(
-                        "Event stream client is too slow, lost {n} events, close the stream so that the UI reconnects"
-                    );
-                    return;
-                }
-                Err(RecvError::Closed) => return,
+                    Err(RecvError::Lagged(n)) => {
+                        warn!("Event stream client is too slow, lost {n} events, close the stream so that the UI reconnects");
+                        return;
+                    }
+                    Err(RecvError::Closed) => return,
+                },
+            };
+            if tx.send(frame).await.is_err() {
+                return; // client disconnected
             }
         }
     });
     futures::stream::unfold(rx, |mut rx| async move {
-        rx.recv().await.map(|event| (Ok(event), rx))
+        rx.recv().await.map(|frame| (Ok(frame), rx))
     })
 }
 
-async fn bootstrap_events(
+async fn bootstrap_frames(
     store: &Store,
     wanted: &impl Fn(&str) -> bool,
-) -> anyhow::Result<Vec<Event>> {
-    let mut events = Vec::new();
+) -> anyhow::Result<Vec<Bytes>> {
+    let mut frames = Vec::new();
     for cluster_id in store.get_cluster_ids().await? {
         if !wanted(&cluster_id) {
             continue;
@@ -304,21 +314,13 @@ async fn bootstrap_events(
             // send the cluster status including last_query_time BEFORE the cluster data
             // so the UI knows how to render correctly from the start
             let data = serde_json::json!({"cluster_id": cluster_id, "status": status});
-            events.push(
-                Event::default()
-                    .event("clusterstatus")
-                    .data(data.to_string()),
-            );
+            frames.push(sse_frame("clusterstatus", &data.to_string()));
         }
         if let Some(data) = store.get_cluster_data(&cluster_id).await? {
-            events.push(
-                Event::default()
-                    .event("clusterupdate")
-                    .data(serde_json::to_string(&*data)?),
-            );
+            frames.push(sse_frame("clusterupdate", &serde_json::to_string(&*data)?));
         }
     }
-    Ok(events)
+    Ok(frames)
 }
 
 fn screen_tokens_page(state: &AppState, new_token: Option<&str>) -> Html<String> {
@@ -371,4 +373,63 @@ async fn redeem_screen_token(
 async fn logout(State(state): State<AppState>, jar: SignedCookieJar) -> Response {
     let jar = jar.remove(Cookie::build(SESSION_COOKIE).path("/"));
     (jar, Redirect::to(&state.config.route_prefix)).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+
+    #[test]
+    fn sse_frame_format() {
+        assert_eq!(
+            sse_frame("bootstrapend", ""),
+            "event: bootstrapend\ndata: \n\n"
+        );
+        assert_eq!(
+            sse_frame("clusterdelta", "{}"),
+            "event: clusterdelta\ndata: {}\n\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn event_stream_bootstrap_live_and_keep_alive() {
+        let store = Arc::new(Store::memory());
+        crate::update::tests::update_mock_clusters(&store).await;
+        let filter: HashSet<String> = ["mock-cluster-1".to_string()].into();
+        let mut stream = Box::pin(event_stream(
+            store.clone(),
+            filter,
+            Duration::from_millis(200),
+        ));
+
+        let mut frames = Vec::new();
+        while let Some(Ok(frame)) = stream.next().await {
+            let frame = String::from_utf8(frame.to_vec()).unwrap();
+            let done = frame.starts_with("event: bootstrapend");
+            frames.push(frame);
+            if done {
+                break;
+            }
+        }
+        // status + data of the selected cluster only, then bootstrapend with a data line
+        assert_eq!(frames.len(), 3, "{frames:?}");
+        assert!(frames[0].starts_with("event: clusterstatus\ndata: {"));
+        assert!(frames[1].starts_with("event: clusterupdate\ndata: {"));
+        assert!(frames[1].contains("\"id\":\"mock-cluster-1\""));
+        assert_eq!(frames[2], "event: bootstrapend\ndata: \n\n");
+
+        // live events are filtered by cluster; keep-alive comments come when idle
+        crate::update::tests::update_mock_clusters(&store).await;
+        let mut live = Vec::new();
+        while live.len() < 2 {
+            let frame = stream.next().await.unwrap().unwrap();
+            live.push(String::from_utf8(frame.to_vec()).unwrap());
+        }
+        assert!(
+            live[0].starts_with("event: clusterdelta\ndata: {\"cluster_id\":\"mock-cluster-1\""),
+            "{live:?}"
+        );
+        assert_eq!(live[1], ":\n\n");
+    }
 }

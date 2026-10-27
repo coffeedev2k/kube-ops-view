@@ -100,6 +100,18 @@ just test       # cargo fmt --check, clippy, unit tests
 just run-local  # build JS bundle, then run the backend in mock mode on http://localhost:8080
 ```
 
+To test against a real local cluster (k3d: 1 server + 2 agents, metrics-server, demo workloads):
+
+```bash
+scripts/k3d-test.sh up       # cluster + demo pods; kubeconfig in /tmp/kov-k3d/kubeconfig.yaml
+cargo run -- --kubeconfig-path /tmp/kov-k3d/kubeconfig.yaml   # local binary against the cluster
+scripts/k3d-test.sh deploy   # build image, deploy deploy/ in the cluster (2 replicas + Redis)
+scripts/k3d-test.sh forward  # http://localhost:8080
+scripts/k3d-test.sh down
+```
+
+The script does not change `~/.kube/config` or the current kubectl context.
+
 ### Code Layout
 
 | Path | Content |
