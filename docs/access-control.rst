@@ -26,7 +26,7 @@ How to configure Kubernetes Operational View to use GitHub OAuth for access cont
 * create a file ``authcode-client-id`` with the contents of the generated GitHub "Client ID"
 * create a file ``authcode-client-secret`` with the contents of the generated GitHub "Client Secret"
 * point the ``CREDENTIALS_DIR`` environment variable to a folder with these two files
-* start Kubernetes Operational View with ``OAUTHLIB_INSECURE_TRANSPORT=true`` (needed as localhost is not running with SSL/TLS), ``AUTHORIZE_URL=https://github.com/login/oauth/authorize``, and ``ACCESS_TOKEN_URL=https://github.com/login/oauth/access_token``
+* start Kubernetes Operational View with ``AUTHORIZE_URL=https://github.com/login/oauth/authorize``, and ``ACCESS_TOKEN_URL=https://github.com/login/oauth/access_token``
 
 Screen Tokens
 =============

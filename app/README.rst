@@ -1,6 +1,6 @@
 This directory contains the EcmaScript frontend code of Kubernetes Operational View and is only needed during build time.
 
-The JavaScript application bundle (webpack) will be generated to ``kube_ops_view/static/build/app*.js`` by running:
+The JavaScript application bundle (webpack) will be generated to ``static/build/app*.js`` by running:
 
 .. code-block:: bash
 

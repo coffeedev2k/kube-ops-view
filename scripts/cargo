@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Run cargo: the local toolchain if installed, else the rust Docker image
+# (cargo cache in ~/.cache/kube-ops-view-cargo). Usage: scripts/cargo <cargo args>
+set -euo pipefail
+if command -v cargo >/dev/null 2>&1; then
+    exec cargo "$@"
+fi
+cache="${HOME}/.cache/kube-ops-view-cargo"
+mkdir -p "${cache}"
+exec docker run --rm \
+    -u "$(id -u):$(id -g)" \
+    -v "$(pwd):/workdir" \
+    -v "${cache}:/cargo" \
+    -w /workdir \
+    -e CARGO_HOME=/cargo \
+    "${RUST_IMAGE:-rust:1-bookworm}" \
+    bash -c 'rustup component add clippy rustfmt >/dev/null 2>&1; exec cargo "$@"' cargo "$@"

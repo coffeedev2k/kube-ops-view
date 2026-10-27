@@ -24,7 +24,7 @@ Goal: provide a common operational picture for multiple Kubernetes clusters.
 
 ### What's Different in This Fork
 
-- **Modernized stack**: Python 3.12, UBI10 minimal base image
+- **Rust backend**: one binary (axum, kube-rs), distroless base image
 - **Node pool grouping**: Visual grouping by node pools with AZ column layout
 - **Security focused**: Regular dependency updates via Dependabot
 - **Multi-arch images**: AMD64 and ARM64 support
@@ -89,10 +89,32 @@ kubectl apply -k openshift/deploy
 The app can be started in "mock mode" to work on UI features without running any Kubernetes cluster:
 
 ```bash
-poetry install
-cd app && npm install && npm start &  # watch and compile JS bundle
-poetry run python -m kube_ops_view --mock --debug
+cd app && npm install && npm start &  # watch and compile JS bundle to static/build/
+cargo run -- --mock --debug
 ```
+
+Without a local Rust toolchain, use `scripts/cargo` or the `Justfile` recipes (they run `cargo` in a Docker container):
+
+```bash
+just test       # cargo fmt --check, clippy, unit tests
+just run-local  # build JS bundle, then run the backend in mock mode on http://localhost:8080
+```
+
+### Code Layout
+
+| Path | Content |
+| ---- | ------- |
+| `src/main.rs` | CLI options (all options also read environment variables), startup, SIGTERM handling |
+| `src/web.rs` | HTTP routes: UI page, `/events` (SSE), screen tokens, `/health`, `/static` |
+| `src/oauth.rs` | OAuth 2 authorization code login |
+| `src/update.rs` | Update loop: query clusters, backoff, publish `clusterupdate`/`clusterdelta`/`clusterstatus` events |
+| `src/store.rs` | Memory store or Redis store (shared data, update lock, pub/sub) |
+| `src/cluster_discovery.rs` | Static URLs, in-cluster service account, kubeconfig contexts, cluster registry, mock clusters |
+| `src/kubernetes.rs` | Query nodes, pods, and metrics of one cluster |
+| `src/json_delta.rs` | JSON diff in the format of `app/src/vendor/json_delta.js` |
+| `src/mock.rs` | Mock cluster data |
+| `templates/`, `static/` | HTML templates (compiled into the binary) and static files (served from `STATIC_DIR`) |
+| `app/` | Frontend (JavaScript, PixiJS) |
 
 ## Building
 
@@ -127,9 +149,12 @@ The following environment variables are supported:
 | `QUERY_INTERVAL`         | Interval in seconds for querying clusters (default: 5)                                             |
 | `REDIS_URL`              | Optional Redis server for pub/sub when running multiple replicas. Example: `redis://my-redis:6379` |
 | `SERVER_PORT`            | HTTP port to listen on (default: `8080`)                                                           |
-| `DEBUG`                  | Set to "true" for local development to reload code changes                                         |
+| `DEBUG`                  | Set to "true" for debug logs and JavaScript cache busting in local development                     |
 | `MOCK`                   | Set to "true" to mock Kubernetes cluster data                                                      |
 | `ROUTE_PREFIX`           | URL prefix for reverse proxy setups                                                                |
+| `SECRET_KEY`             | Secret key to sign session cookies (default: `development`, change it when you use OAuth)          |
+| `STATIC_DIR`             | Directory with static files and the JavaScript bundle in `build/` (default: `static`)             |
+| `RUST_LOG`               | Log filter, for example `info,kube_ops_view=debug` (overrides `DEBUG`)                             |
 | `NODE_LINK_URL_TEMPLATE` | Template to make Nodes clickable. Variables: `{cluster}`, `{name}`                                 |
 | `POD_LINK_URL_TEMPLATE`  | Template to make Pods clickable. Variables: `{cluster}`, `{namespace}`, `{name}`                   |
 
@@ -140,7 +165,7 @@ The following environment variables are supported:
 | `AUTHORIZE_URL`    | OAuth 2 authorization endpoint URL                      |
 | `ACCESS_TOKEN_URL` | Token endpoint URL for OAuth 2 Authorization Code Grant |
 | `SCOPE`            | OAuth scope for access level                            |
-| `CREDENTIALS_DIR`  | Directory to read OAuth credentials from                |
+| `CREDENTIALS_DIR`  | Directory to read OAuth credentials from (`authcode-client-id`, `authcode-client-secret`; `read-only-token-secret` for the cluster registry) |
 
 ## Supported Browsers
 

@@ -3,7 +3,7 @@ __pycache__
 *.pyc
 .idea/
 **/node_modules/
-kube_ops_view/static/build/
+static/build/
 *-secret
 npm-debug.log*
 .tox/
@@ -17,3 +17,4 @@ scm-source.json
 .python-version
 .trivy-cache/
 trivy-report.json
+/target/

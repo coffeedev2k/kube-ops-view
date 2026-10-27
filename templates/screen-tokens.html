@@ -8,9 +8,7 @@
     </head>
     <body>
         <h1>Screen Tokens</h1>
-        {% if new_token: %}
-            <p>The new token is: <code>{{ new_token }}</code></p>
-        {% endif %}
+        {{ new_token_html }}
         <form action="" method="post">
             <button type="submit">Create new token</button>
         </form>

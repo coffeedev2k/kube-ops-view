@@ -24,25 +24,24 @@ default:
 # Development Workflow
 # ============================================================================
 
-# Install all dependencies (Python + Node)
-install: install-python install-node
-
-# Install Python dependencies
-install-python:
-    poetry install
-
 # Install Node dependencies
-install-node:
+install:
     @just _node "npm install"
 
-# Run linting (Python + JS)
-lint: install-python
-    poetry run pre-commit run --all-files
+# Run linting (Rust format + clippy, JS eslint)
+lint:
+    scripts/cargo fmt --check
+    scripts/cargo clippy --all-targets --locked -- -D warnings
+    @just _node "npm run lint"
 
-# Run Python tests with coverage
+# Run Rust unit tests
 test: lint
-    poetry run coverage run --source=kube_ops_view -m pytest -v
-    poetry run coverage report
+    scripts/cargo test --locked
+
+# Build JS bundle and run the backend in mock mode on http://localhost:8080
+run-local: build-frontend
+    scripts/cargo build --locked
+    ./target/debug/kube-ops-view --mock --debug
 
 # Watch frontend for development (rebuilds on changes)
 watch:
@@ -185,7 +184,7 @@ update-manifests:
 
 # Clean build artifacts
 clean:
-    rm -rf kube_ops_view/static/build
+    rm -rf static/build target
     rm -rf app/node_modules/.cache
 
 # Clean all project containers (running and stopped)

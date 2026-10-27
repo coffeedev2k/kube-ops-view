@@ -8,56 +8,23 @@ repos:
       - id: check-hooks-apply
       - id: check-useless-excludes
 
-  # formatters
-
-  - repo: https://github.com/asottile/reorder_python_imports
-    rev: v3.16.0
-    hooks:
-      - id: reorder-python-imports
-
-  - repo: https://github.com/ambv/black
-    rev: 26.1.0
-    hooks:
-      - id: black
-
-  - repo: https://github.com/asottile/pyupgrade
-    rev: v3.21.2
-    hooks:
-      - id: pyupgrade
-        stages: [pre-push]
-
-  # linters
-
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.9.3
-    hooks:
-      - id: bandit
-        args: ["-x", "tests"]
-        stages: [pre-push]
-
-  - repo: https://github.com/PyCQA/pydocstyle
-    rev: 6.3.0
-    hooks:
-      - id: pydocstyle
-        args: ["--ignore=D10,D21,D202"]
+  # formatters and linters (scripts/cargo uses Docker if Rust is not installed)
 
   - repo: local
     hooks:
-      - id: safety
-        name: safety
-        entry: safety
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: scripts/cargo fmt --check
         language: system
+        types: [rust]
         pass_filenames: false
-        args: ["scan", "--bare"]
-        stages: [pre-push]
 
-      - id: poetry
-        name: poetry
-        description: Validates the structure of the pyproject.toml file
-        entry: poetry check
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: scripts/cargo clippy --all-targets --locked -- -D warnings
         language: system
+        types: [rust]
         pass_filenames: false
-        files: ^pyproject.toml$
         stages: [pre-push]
 
   - repo: https://github.com/adrienverge/yamllint
@@ -65,18 +32,6 @@ repos:
     hooks:
       - id: yamllint
         args: ["--strict", "-d", "{rules: {line-length: {max: 180}}}"]
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.19.1
-    hooks:
-      - id: mypy
-        additional_dependencies:
-          ["types-requests", "types-PyYAML", "types-redis"]
-
-  - repo: https://github.com/pycqa/flake8
-    rev: 7.3.0
-    hooks:
-      - id: flake8
 
   - repo: https://github.com/pryorda/dockerfilelint-precommit-hooks
     rev: v0.1.0
@@ -90,26 +45,10 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-added-large-files
-      - id: check-docstring-first
-      - id: debug-statements
       - id: end-of-file-fixer
       - id: trailing-whitespace
-      - id: check-ast
-      - id: check-builtin-literals
       - id: detect-private-key
       - id: mixed-line-ending
-      - id: name-tests-test
-        args: ["--django"]
-
-  - repo: https://github.com/pre-commit/pygrep-hooks
-    rev: v1.10.0
-    hooks:
-      #      - id: rst-backticks
-      - id: python-use-type-annotations
-      - id: python-no-log-warn
-      - id: python-no-eval
-      - id: python-check-mock-methods
-      - id: python-check-blanket-noqa
 
   # commit-msg
   # http://jorisroovers.com/gitlint/#using-gitlint-through-pre-commit
