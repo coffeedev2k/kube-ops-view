@@ -1,6 +1,7 @@
 import { Node, getNodePoolType, getPoolColor, getNodeAZ, POOL_PRIORITY } from './node.js'
 import { Pod } from './pod.js'
 import App from './app.js'
+import { textStyle } from './utils.js'
 import * as PIXI from 'pixi.js'
 
 export default class Cluster extends PIXI.Graphics {
@@ -17,7 +18,26 @@ export default class Cluster extends PIXI.Graphics {
     if (this.tick) {
       PIXI.Ticker.shared.remove(this.tick, this)
     }
+    this.destroyPreviousDrawing()
     super.destroy()
+  }
+
+  /**
+   * Destroy the display objects of the previous draw() (nodes, headers, texts): removeChildren()
+   * alone keeps their GPU data and text textures. Pod objects survive: ALL_PODS reuses them.
+   */
+  destroyPreviousDrawing() {
+    for (const child of this.removeChildren()) {
+      if (child instanceof Pod) {
+        continue
+      }
+      for (const grandChild of [...child.children]) {
+        if (grandChild instanceof Pod) {
+          child.removeChild(grandChild)
+        }
+      }
+      child.destroy({ children: true })
+    }
   }
 
   pulsate(_time) {
@@ -142,7 +162,7 @@ export default class Cluster extends PIXI.Graphics {
     }
     control.addChild(mark)
 
-    const label = new PIXI.Text({ text: 'collapse all', style: { fontFamily: 'ShareTechMono', fontSize: 10, fill: 0x000000 } })
+    const label = new PIXI.Text({ text: 'collapse all', style: textStyle(10, 0x000000) })
     label.x = 12
     label.y = 2
     control.addChild(label)
@@ -157,7 +177,7 @@ export default class Cluster extends PIXI.Graphics {
   }
 
   draw() {
-    this.removeChildren()
+    this.destroyPreviousDrawing()
     this.clear()
 
     const left = 10
@@ -175,7 +195,7 @@ export default class Cluster extends PIXI.Graphics {
     const collapsedPoolCount = sortedPoolTypes.filter(poolType => App.current.isPoolCollapsed(clusterId, poolType)).length
 
     // Create top handle content first: its width sets the minimal cluster width
-    const handleText = new PIXI.Text({ text: ''.concat(this.cluster.api_server_url, ' (', this.cluster.id, ')'), style: { fontFamily: 'ShareTechMono', fontSize: 10, fill: 0x000000 } })
+    const handleText = new PIXI.Text({ text: ''.concat(this.cluster.api_server_url, ' (', this.cluster.id, ')'), style: textStyle(10, 0x000000) })
     handleText.x = 2
     handleText.y = 2
     const collapseAllControl = sortedPoolTypes.length > 0
@@ -290,7 +310,7 @@ export default class Cluster extends PIXI.Graphics {
 
       const poolLabel = new PIXI.Text({
         text: `${poolType.toUpperCase()} (${totalNodesInPool})`,
-        style: { fontFamily: 'ShareTechMono', fontSize: 10, fill: 0xffffff }
+        style: textStyle(10, 0xffffff)
       })
       poolLabel.x = 18
       poolLabel.y = 2
@@ -343,7 +363,7 @@ export default class Cluster extends PIXI.Graphics {
 
           const azLabel = new PIXI.Text({
             text: `${displayAZ} (${nodesInAZ.length})`,
-            style: { fontFamily: 'ShareTechMono', fontSize: 9, fill: 0xcccccc }
+            style: textStyle(9, 0xcccccc)
           })
           azLabel.x = 3
           azLabel.y = 1
@@ -415,6 +435,8 @@ export default class Cluster extends PIXI.Graphics {
     const height = Math.max(minClusterHeight, currentY - padding)
     this.rect(0, 0, width, height)
     this.stroke({ width: 2, color: App.current.theme.primaryColor })
+    // the layout uses this; the "height" property walks all children
+    this.drawnHeight = height
 
     // Draw cluster top handle
     const topHandle = this.topHandle = new PIXI.Graphics()
@@ -434,7 +456,11 @@ export default class Cluster extends PIXI.Graphics {
     }
     this.addChild(topHandle)
 
-    // Handle stale data pulsating
+    this.updateStaleState()
+  }
+
+  /** Pulsate when the cluster data is stale (cheap: also runs when draw() is skipped). */
+  updateStaleState() {
     let newTick = null
     const nowSeconds = Date.now() / 1000
     if (this.status && this.status.last_query_time < nowSeconds - 20) {

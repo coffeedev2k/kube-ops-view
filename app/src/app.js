@@ -61,6 +61,10 @@ export default class App {
     this.connectTime = null
     this.keepAliveTimer = null
     this.clusters = new Map()
+    // cluster id -> number that changes with each data change: update() redraws only changed clusters
+    this.clusterDataVersions = new Map()
+    // changes when the layout of all clusters changes (pool collapse, sorting)
+    this.layoutVersion = 0
     this.clusterStatuses = new Map()
     this.viewContainerTargetPosition = new PIXI.Point()
     this.bootstrapping = true
@@ -424,6 +428,12 @@ export default class App {
   }
 
   draw() {
+    if (this.viewContainer) {
+      // theme switch: the old cluster components are not used again
+      for (const component of this.viewContainer.removeChildren()) {
+        component.destroy()
+      }
+    }
     this.stage.removeChildren()
     this.theme.apply(this.stage)
 
@@ -632,23 +642,31 @@ export default class App {
         if (!clusterBox) {
           clusterBox = new Cluster(cluster, status, this.tooltip, this.config)
           this.viewContainer.addChild(clusterBox)
-        } else {
-          clusterBox.cluster = cluster
-          clusterBox.status = status
         }
-        try {
-          clusterBox.draw()
-        } catch (e) {
-          console.error('Error drawing cluster ' + cluster.id, e)
+        clusterBox.cluster = cluster
+        clusterBox.status = status
+        const dataVersion = this.clusterDataVersions.get(cluster.id)
+        if (clusterBox.drawnDataVersion !== dataVersion || clusterBox.drawnLayoutVersion !== this.layoutVersion) {
+          try {
+            clusterBox.draw()
+            clusterBox.drawnDataVersion = dataVersion
+            clusterBox.drawnLayoutVersion = this.layoutVersion
+          } catch (e) {
+            console.error('Error drawing cluster ' + cluster.id, e)
+          }
+        } else {
+          // unchanged data and layout: no redraw, only the stale-data check
+          clusterBox.updateStaleState()
         }
         clusterBox.x = 0
         clusterBox.y = y
-        y += clusterBox.height + 10
+        y += (clusterBox.drawnHeight || clusterBox.height) + 10
       }
     }
-    for (const component of this.viewContainer.children) {
+    for (const component of [...this.viewContainer.children]) {
       if (!clusterIds.has(component.cluster.id)) {
         this.viewContainer.removeChild(component)
+        component.destroy()
       }
     }
     this.filter()
@@ -699,6 +717,7 @@ export default class App {
 
   changeSorting(text, newSortFunction) {
     this.sorterFn = newSortFunction
+    this.layoutVersion++
     localStorage.setItem('sorterFn', text)
     this.update()
   }
@@ -784,6 +803,8 @@ export default class App {
   }
 
   saveCollapsedPools() {
+    // all pool collapse changes come here: redraw the clusters
+    this.layoutVersion++
     localStorage.setItem('collapsedPools', JSON.stringify(Array.from(this.collapsedPools)))
     const collapsedStr = Array.from(this.collapsedPools).join(',')
     this.changeLocationHash('collapsed', collapsedStr || null)
@@ -869,6 +890,7 @@ export default class App {
         // outdated data => ignore
       } else {
         that.clusters.set(cluster.id, cluster)
+        that.clusterDataVersions.set(cluster.id, (that.clusterDataVersions.get(cluster.id) || 0) + 1)
         that.update()
       }
     })
@@ -878,12 +900,23 @@ export default class App {
       const data = JSON.parse(event.data)
       // we received some delta => we know that the cluster query succeeded!
       that.refreshLastQueryTime(data.cluster_id)
-      let cluster = that.clusters.get(data.cluster_id)
-      if (cluster && data.delta) {
-        // deep copy cluster object (patch function mutates inplace!)
-        cluster = JSON.parse(JSON.stringify(cluster))
-        cluster = JSON_delta.patch(cluster, data.delta)
-        that.clusters.set(cluster.id, cluster)
+      const cluster = that.clusters.get(data.cluster_id)
+      if (cluster && data.delta && data.delta.length > 0) {
+        // patch in place (no deep copy of the whole cluster); the data version tells update() to redraw
+        let patched
+        try {
+          patched = JSON_delta.patch(cluster, data.delta)
+        } catch (e) {
+          console.error('Failed to apply delta for cluster ' + data.cluster_id + ', reconnect to get full data', e)
+          that.clusters.delete(data.cluster_id)
+          that.connect()
+          return
+        }
+        that.clusters.set(data.cluster_id, patched)
+        that.clusterDataVersions.set(data.cluster_id, (that.clusterDataVersions.get(data.cluster_id) || 0) + 1)
+        that.update()
+      } else if (cluster) {
+        // empty delta: data unchanged; update() only refreshes the stale-data state
         that.update()
       }
     })

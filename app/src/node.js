@@ -1,6 +1,6 @@
 import { Pod } from './pod.js'
 import Bars from './bars.js'
-import { parseResource } from './utils.js'
+import { parseResource, textStyle } from './utils.js'
 import App from './app.js'
 import * as PIXI from 'pixi.js'
 
@@ -275,7 +275,7 @@ export class Node extends PIXI.Graphics {
     const availableTextRoom = roomForText - (indicatorWidth > 0 ? 3 : 0)
     const nodeName = (this.node && this.node.name) || ''
     const ellipsizedNodeName = nodeName.length > availableTextRoom ? nodeName.substring(0, availableTextRoom).concat('…') : nodeName
-    const text = new PIXI.Text({ text: ellipsizedNodeName, style: { fontFamily: 'ShareTechMono', fontSize: 10, fill: 0x000000 } })
+    const text = new PIXI.Text({ text: ellipsizedNodeName, style: textStyle(10, 0x000000) })
     text.x = 2
     text.y = 2
     topHandle.addChild(text)
@@ -289,7 +289,7 @@ export class Node extends PIXI.Graphics {
       badge.fill({ color: 0x333333, alpha: 0.8 })
 
       // Show number of additional roles
-      const badgeText = new PIXI.Text({ text: `+${allRoles.length - 1}`, style: { fontFamily: 'ShareTechMono', fontSize: 7, fill: 0xffffff } })
+      const badgeText = new PIXI.Text({ text: `+${allRoles.length - 1}`, style: textStyle(7, 0xffffff) })
       badgeText.x = 2
       badgeText.y = 1
       badge.addChild(badgeText)

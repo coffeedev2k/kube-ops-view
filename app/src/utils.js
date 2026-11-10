@@ -98,3 +98,17 @@ const podResource = type => (containers, resource) =>
     .reduce((a, b) => a + b, 0)
 
 export { FACTORS, hsvToRgb, getBarColor, parseResource, metric, podResource }
+
+const TEXT_STYLES = new Map()
+
+/**
+ * Shared text style for texts that are created on each draw: the pixi text texture cache keys
+ * contain the style id, so a new style object per text makes the cache grow on each update.
+ */
+export function textStyle(fontSize, fill) {
+  const key = fontSize + ':' + fill
+  if (!TEXT_STYLES.has(key)) {
+    TEXT_STYLES.set(key, new PIXI.TextStyle({ fontFamily: 'ShareTechMono', fontSize, fill }))
+  }
+  return TEXT_STYLES.get(key)
+}

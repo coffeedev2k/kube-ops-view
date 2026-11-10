@@ -90,10 +90,73 @@ export class Pod extends PIXI.Graphics {
     this.tick = null
     this._progress = 1
     this._targetPosition = null
+    // theme + pod data of the last draw(): draw() skips the redraw when nothing changed
+    this._drawnSignature = null
 
     if (cluster) {
       ALL_PODS[cluster.cluster.id + '/' + pod.namespace + '/' + pod.name] = this
     }
+    this.addListeners()
+  }
+
+  /** Register the event listeners once: draw() runs on each update and must not add them again. */
+  addListeners() {
+    this.interactive = true
+    this.on('mouseover', function () {
+      this.filters = this.filters.filter(x => x != BRIGHTNESS_FILTER).concat([BRIGHTNESS_FILTER])
+      this.tooltip.setText(this.tooltipText())
+      this.tooltip.position = this.toGlobal(new PIXI.Point(10, 10))
+      this.tooltip.visible = true
+    })
+    this.on('mouseout', function () {
+      this.filters = this.filters.filter(x => x != BRIGHTNESS_FILTER)
+      this.tooltip.visible = false
+    })
+    if (App.current.config.podLinkUrlTemplate !== null) {
+      this.cursor = 'pointer'
+      this.on('click', function () {
+        location.href = App.current.config.podLinkUrlTemplate.replace('{cluster}', this.cluster.cluster.id).replace('{namespace}', this.pod.namespace).replace('{name}', this.pod.name)
+      })
+    }
+  }
+
+  tooltipText() {
+    const resources = this.getResourceUsage()
+    const ready = this.pod.containers.filter(container => container.ready).length
+    let s = this.pod.name
+    s += '\nNamespace : ' + this.pod.namespace
+    s += '\nStatus    : ' + this.pod.phase + ' (' + ready + '/' + this.pod.containers.length + ' ready)'
+    s += '\nStart Time: ' + this.pod.startTime
+    s += '\nLabels    :'
+    for (var key of Object.keys(this.pod.labels).sort()) {
+      if (key !== 'pod-template-hash') {
+        s += '\n  ' + key + ': ' + this.pod.labels[key]
+      }
+    }
+    s += '\nContainers:'
+    for (const container of this.pod.containers) {
+      s += '\n  ' + container.name + ': '
+      if (container.state) {
+        const key = Object.keys(container.state)[0]
+        s += key
+        if (container.state[key].reason) {
+          // "CrashLoopBackOff"
+          s += ': ' + container.state[key].reason
+        }
+      }
+      if (container.restartCount) {
+        s += ' (' + container.restartCount + ' restarts)'
+      }
+    }
+    s += '\nCPU:'
+    s += '\n  Requested: ' + (resources.cpu.requested / FACTORS.m).toFixed(0) + ' m'
+    s += '\n  Limit:     ' + (resources.cpu.limit / FACTORS.m).toFixed(0) + ' m'
+    s += '\n  Used:      ' + (resources.cpu.used / FACTORS.m).toFixed(0) + ' m'
+    s += '\nMemory:'
+    s += '\n  Requested: ' + (resources.memory.requested / FACTORS.Mi).toFixed(0) + ' MiB'
+    s += '\n  Limit:     ' + (resources.memory.limit / FACTORS.Mi).toFixed(0) + ' MiB'
+    s += '\n  Used:      ' + (resources.memory.used / FACTORS.Mi).toFixed(0) + ' MiB'
+    return s
   }
 
   destroy() {
@@ -163,7 +226,6 @@ export class Pod extends PIXI.Graphics {
     const existingPod = ALL_PODS[cluster.cluster.id + '/' + pod.namespace + '/' + pod.name]
     if (existingPod) {
       existingPod.pod = pod
-      existingPod.clear()
       return existingPod
     } else {
       return new Pod(pod, cluster, tooltip)
@@ -186,6 +248,12 @@ export class Pod extends PIXI.Graphics {
   }
 
   draw() {
+    const signature = App.current.theme.name + JSON.stringify(this.pod)
+    if (signature === this._drawnSignature) {
+      return this
+    }
+    this._drawnSignature = signature
+    this.clear()
 
     let ready = 0
     let running = 0
@@ -206,57 +274,6 @@ export class Pod extends PIXI.Graphics {
     let newTick = null
 
     const podBox = this
-    podBox.interactive = true
-    podBox.on('mouseover', function () {
-      podBox.filters = podBox.filters.filter(x => x != BRIGHTNESS_FILTER).concat([BRIGHTNESS_FILTER])
-      let s = this.pod.name
-      s += '\nNamespace : ' + this.pod.namespace
-      s += '\nStatus    : ' + this.pod.phase + ' (' + ready + '/' + this.pod.containers.length + ' ready)'
-      s += '\nStart Time: ' + this.pod.startTime
-      s += '\nLabels    :'
-      for (var key of Object.keys(this.pod.labels).sort()) {
-        if (key !== 'pod-template-hash') {
-          s += '\n  ' + key + ': ' + this.pod.labels[key]
-        }
-      }
-      s += '\nContainers:'
-      for (const container of this.pod.containers) {
-        s += '\n  ' + container.name + ': '
-        if (container.state) {
-          const key = Object.keys(container.state)[0]
-          s += key
-          if (container.state[key].reason) {
-            // "CrashLoopBackOff"
-            s += ': ' + container.state[key].reason
-          }
-        }
-        if (container.restartCount) {
-          s += ' (' + container.restartCount + ' restarts)'
-        }
-      }
-      s += '\nCPU:'
-      s += '\n  Requested: ' + (resources.cpu.requested / FACTORS.m).toFixed(0) + ' m'
-      s += '\n  Limit:     ' + (resources.cpu.limit / FACTORS.m).toFixed(0) + ' m'
-      s += '\n  Used:      ' + (resources.cpu.used / FACTORS.m).toFixed(0) + ' m'
-      s += '\nMemory:'
-      s += '\n  Requested: ' + (resources.memory.requested / FACTORS.Mi).toFixed(0) + ' MiB'
-      s += '\n  Limit:     ' + (resources.memory.limit / FACTORS.Mi).toFixed(0) + ' MiB'
-      s += '\n  Used:      ' + (resources.memory.used / FACTORS.Mi).toFixed(0) + ' MiB'
-
-      this.tooltip.setText(s)
-      this.tooltip.position = this.toGlobal(new PIXI.Point(10, 10))
-      this.tooltip.visible = true
-    })
-    podBox.on('mouseout', function () {
-      podBox.filters = podBox.filters.filter(x => x != BRIGHTNESS_FILTER)
-      this.tooltip.visible = false
-    })
-    if (App.current.config.podLinkUrlTemplate !== null) {
-      podBox.cursor = 'pointer'
-      podBox.on('click', function () {
-        location.href = App.current.config.podLinkUrlTemplate.replace('{cluster}', this.cluster.cluster.id).replace('{namespace}', this.pod.namespace).replace('{name}', this.pod.name)
-      })
-    }
     // Draw container cells
     const w = 10 / this.pod.containers.length
     for (let i = 0; i < this.pod.containers.length; i++) {
