@@ -2,6 +2,7 @@
 # Local test cluster for kube-ops-view (k3d, 1 server + 2 agents, metrics-server included).
 #
 #   scripts/k3d-test.sh up       create the cluster, label zones, deploy demo workloads
+#                                (KOV_K3D_AGENTS=1 for a smaller cluster, default 2 agents)
 #   scripts/k3d-test.sh deploy   build the image, import it, apply deploy/ (2 replicas + Redis)
 #   scripts/k3d-test.sh forward  port-forward the service to http://localhost:8080
 #   scripts/k3d-test.sh down     delete the cluster
@@ -11,6 +12,8 @@
 set -euo pipefail
 
 CLUSTER="${KOV_K3D_CLUSTER:-kov-test}"
+# fewer agents for a loaded machine (each k3s node also uses inotify instances)
+AGENTS="${KOV_K3D_AGENTS:-2}"
 DIR="${KOV_K3D_DIR:-/tmp/kov-k3d}"
 KUBECONFIG_FILE="${DIR}/kubeconfig.yaml"
 TAG="${KOV_K3D_TAG:-k3d-$(date +%s)}"
@@ -24,14 +27,16 @@ k() { kubectl --kubeconfig "${KUBECONFIG_FILE}" --context "k3d-${CLUSTER}" "$@";
 
 up() {
     mkdir -p "${DIR}"
-    k3d cluster create "${CLUSTER}" --agents 2 \
+    k3d cluster create "${CLUSTER}" --agents "${AGENTS}" \
         --kubeconfig-update-default=false --kubeconfig-switch-context=false \
         --wait --timeout 300s
     k3d kubeconfig get "${CLUSTER}" > "${KUBECONFIG_FILE}"
     chmod 600 "${KUBECONFIG_FILE}"
     k label node "k3d-${CLUSTER}-server-0" topology.kubernetes.io/zone=zone-a --overwrite
-    k label node "k3d-${CLUSTER}-agent-0" topology.kubernetes.io/zone=zone-b node-role.kubernetes.io/worker= --overwrite
-    k label node "k3d-${CLUSTER}-agent-1" topology.kubernetes.io/zone=zone-c node-role.kubernetes.io/worker= --overwrite
+    local zones=(zone-b zone-c zone-d zone-e)
+    for ((i = 0; i < AGENTS; i++)); do
+        k label node "k3d-${CLUSTER}-agent-${i}" "topology.kubernetes.io/zone=${zones[i % 4]}" node-role.kubernetes.io/worker= --overwrite
+    done
     k -n kube-system rollout status deploy/metrics-server --timeout=180s
     k apply -f - <<'EOF'
 apiVersion: v1
