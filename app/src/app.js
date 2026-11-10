@@ -1,5 +1,6 @@
 import Tooltip from './tooltip.js'
 import Cluster from './cluster.js'
+import { getNodePoolType } from './node.js'
 import { Pod, ALL_PODS, ALL_SORTS, ALL_STATUS_FILTERS } from './pod.js'
 import SelectBox from './selectbox.js'
 import { Theme, ALL_THEMES } from './themes.js'
@@ -22,7 +23,12 @@ export default class App {
 
     this.filterString = params.get('q') || ''
     this.selectedClusters = new Set((params.get('clusters') || '').split(',').filter(x => x))
+    // keys "<cluster>/<namespace>/<name>" of pods in the cluster data (drawn or not)
     this.seenPods = new Set()
+    // pod key -> node name (null: unassigned) from the previous update
+    this.podNodeNames = new Map()
+    // clusters that had data in the previous update
+    this.knownClusterIds = new Set()
 
     // check localStorage, use the first function as a default option
     const indexSorterFn = ALL_SORTS.findIndex(obj => obj.text === (localStorage.getItem('sorterFn') || ALL_SORTS[0].text))
@@ -329,30 +335,29 @@ export default class App {
 
     const that = this
 
-    function getLocalCoordinates(x, y) {
-      return that.viewContainer.toLocal(new PIXI.Point(x, y))
-    }
-
     const minScale = 1 / 32
     const maxScale = 32
 
     function zoom(x, y, isZoomIn) {
+      const view = that.viewContainer
       const direction = isZoomIn ? 1 : -1
       const factor = (1 + direction * 0.1)
-      const newScale = Math.min(Math.max(that.viewContainer.scale.x * factor, minScale), maxScale)
-      that.viewContainer.scale.set(newScale)
-
-      // zoom around one point on ViewContainer
-      const beforeTransform = getLocalCoordinates(x, y)
-      // In pixi.js 8.x, transforms update automatically - no need to call updateTransform
-      const afterTransform = getLocalCoordinates(x, y)
-
-      that.viewContainer.x += (afterTransform.x - beforeTransform.x) * newScale
-      that.viewContainer.y += (afterTransform.y - beforeTransform.y) * newScale
+      const oldScale = view.scale.x
+      const newScale = Math.min(Math.max(oldScale * factor, minScale), maxScale)
+      if (newScale === oldScale) {
+        return
+      }
+      // zoom around the mouse pointer: the view point under the pointer stays at the same screen position
+      // (viewContainer is a direct child of the unscaled stage: screen = position + local * scale)
+      const localX = (x - view.x) / oldScale
+      const localY = (y - view.y) / oldScale
+      view.scale.set(newScale)
+      view.x = x - localX * newScale
+      view.y = y - localY * newScale
 
       // stop any current move animation
-      that.viewContainerTargetPosition.x = that.viewContainer.x
-      that.viewContainerTargetPosition.y = that.viewContainer.y
+      that.viewContainerTargetPosition.x = view.x
+      that.viewContainerTargetPosition.y = view.y
     }
 
     addWheelListener(this.renderer.canvas, function (e) {
@@ -514,45 +519,105 @@ export default class App {
     this.stage.addChild(pod)
   }
 
+  /**
+   * Location of each pod in the cluster data.
+   * @returns {Map} - pod key "<cluster>/<namespace>/<name>" -> { clusterId, node (null: unassigned), pod }
+   */
+  collectPodLocations(clusters) {
+    const locations = new Map()
+    for (const cluster of clusters) {
+      if (!cluster) continue
+      for (const node of Object.values(cluster.nodes || {})) {
+        for (const pod of Object.values((node && node.pods) || {})) {
+          if (pod && pod.namespace && pod.name) {
+            locations.set(cluster.id + '/' + pod.namespace + '/' + pod.name, { clusterId: cluster.id, node, pod })
+          }
+        }
+      }
+      for (const pod of Object.values(cluster.unassigned_pods || {})) {
+        if (pod && pod.namespace && pod.name) {
+          locations.set(cluster.id + '/' + pod.namespace + '/' + pod.name, { clusterId: cluster.id, node: null, pod })
+        }
+      }
+    }
+    return locations
+  }
+
+  /**
+   * Expand the collapsed pool of each node that got a pod scheduled since the previous update
+   * (a new pod on the node, or a pending pod that got the node), to show where the pod was deployed.
+   * Not for the first data of a cluster (bootstrap, newly shown cluster): all its pods are "new" then.
+   */
+  expandPoolsOfScheduledPods(podLocations) {
+    let changed = false
+    for (const [key, location] of podLocations) {
+      if (!location.node || this.podNodeNames.get(key)) {
+        // unassigned, or it was on a node already
+        continue
+      }
+      if (!this.knownClusterIds.has(location.clusterId)) {
+        continue
+      }
+      if (this.selectedClusters.size && !this.selectedClusters.has(location.clusterId)) {
+        continue
+      }
+      const poolType = getNodePoolType(location.node.labels || {})
+      if (this.isPoolCollapsed(location.clusterId, poolType)) {
+        console.info(`Expand pool ${poolType} of cluster ${location.clusterId}: pod ${location.pod.namespace}/${location.pod.name} was scheduled to node ${location.node.name}`)
+        this.expandPool(location.clusterId, poolType)
+        changed = true
+      }
+    }
+    if (changed) {
+      this.saveCollapsedPools()
+    }
+  }
+
+  /** True if the display object is drawn: its parent chain reaches the stage. */
+  isOnStage(displayObject) {
+    for (let obj = displayObject; obj; obj = obj.parent) {
+      if (obj === this.stage) {
+        return true
+      }
+    }
+    return false
+  }
+
   update() {
     // make sure we create a copy (this.clusters might get modified)
     const clusters = Array.from(this.clusters.entries()).sort().map(idCluster => idCluster[1])
     const that = this
     let changes = 0
-    const podKeys = new Set()
-    for (const cluster of clusters) {
-      for (const node of Object.values((cluster && cluster.nodes) || {})) {
-        for (const pod of Object.values((node && node.pods) || {})) {
-          if (pod && pod.namespace && pod.name) {
-            podKeys.add(cluster.id + '/' + pod.namespace + '/' + pod.name)
-          }
-        }
-      }
-      for (const pod of Object.values((cluster && cluster.unassigned_pods) || {})) {
-        if (pod && pod.namespace && pod.name) {
-          podKeys.add(cluster.id + '/' + pod.namespace + '/' + pod.name)
-        }
-      }
-    }
+    const podLocations = this.collectPodLocations(clusters)
     for (const key of Object.keys(ALL_PODS)) {
       const pod = ALL_PODS[key]
-      if (!podKeys.has(key)) {
+      if (!podLocations.has(key)) {
         // pod was deleted
         delete ALL_PODS[key]
-        this.seenPods.delete(key)
-        if (changes < 10) {
+        // animate only pods that are drawn now (not in a collapsed pool or a hidden cluster)
+        if (changes < 10 && this.isOnStage(pod)) {
           // NOTE: we need to do this BEFORE removeChildren()
           // to get correct global coordinates
           const globalPos = pod.toGlobal({ x: 0, y: 0 })
           window.setTimeout(function () {
             that.animatePodDeletion(pod, globalPos)
           }, 100 * changes)
+          changes++
         } else {
           pod.destroy()
         }
-        changes++
       }
     }
+    for (const key of this.seenPods) {
+      if (!podLocations.has(key)) {
+        this.seenPods.delete(key)
+      }
+    }
+    if (!this.bootstrapping) {
+      // before drawing: an expanded pool gets drawn in this update
+      this.expandPoolsOfScheduledPods(podLocations)
+    }
+
     const clusterComponentById = {}
     for (const component of this.viewContainer.children) {
       clusterComponentById[component.cluster.id] = component
@@ -588,11 +653,15 @@ export default class App {
     }
     this.filter()
 
-    for (const key of Object.keys(ALL_PODS)) {
+    for (const key of podLocations.keys()) {
+      if (this.seenPods.has(key)) {
+        continue
+      }
+      // pod was created: mark it as seen even if it is not drawn (collapsed pool, hidden cluster),
+      // so it does not animate as a new pod when its pool is expanded later
+      this.seenPods.add(key)
       const pod = ALL_PODS[key]
-      if (!this.seenPods.has(key)) {
-        // pod was created
-        this.seenPods.add(key)
+      if (pod && this.isOnStage(pod)) {
         if (!this.bootstrapping && changes < 10) {
           const globalPos = pod.toGlobal({ x: 0, y: 0 })
           window.setTimeout(function () {
@@ -602,6 +671,12 @@ export default class App {
         changes++
       }
     }
+
+    this.podNodeNames = new Map()
+    for (const [key, location] of podLocations) {
+      this.podNodeNames.set(key, location.node ? location.node.name : null)
+    }
+    this.knownClusterIds = new Set(clusters.filter(c => c).map(c => c.id))
   }
 
   tick(ticker) {
@@ -680,6 +755,19 @@ export default class App {
     }
     this.saveCollapsedPools()
     this.update()
+  }
+
+  expandPool(clusterId, poolType) {
+    if (this.collapsedPools.has(poolType)) {
+      // pool type collapsed in all clusters: keep it collapsed in the other clusters
+      this.collapsedPools.delete(poolType)
+      for (const otherClusterId of this.clusters.keys()) {
+        if (otherClusterId !== clusterId) {
+          this.collapsedPools.add(otherClusterId + ':' + poolType)
+        }
+      }
+    }
+    this.collapsedPools.delete(clusterId + ':' + poolType)
   }
 
   setClusterPoolsCollapsed(clusterId, poolTypes, collapsed) {

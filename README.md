@@ -25,7 +25,8 @@ Goal: provide a common operational picture for multiple Kubernetes clusters.
 ### What's Different in This Fork
 
 - **Rust backend**: one binary (axum, kube-rs), distroless base image
-- **Node pool grouping**: Visual grouping by node pools with AZ column layout
+- **Node pool grouping**: Visual grouping by node pools with AZ column layout; a collapsed pool expands when a pod gets scheduled to one of its nodes
+- **Zoom at the mouse pointer**: the mouse wheel zooms around the point under the pointer
 - **Security focused**: Regular dependency updates via Dependabot
 - **Multi-arch images**: AMD64 and ARM64 support
 - **OpenShift support**: Ready-to-use deployment manifests
