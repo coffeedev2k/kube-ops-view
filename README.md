@@ -143,6 +143,21 @@ Or build directly with Docker:
 docker build -t kube-ops-view .
 ```
 
+## Kubernetes API Load and Memory
+
+kube-ops-view watches nodes and pods like a client-go informer: one LIST (`resourceVersion=0`, served from the
+apiserver cache), then a WATCH stream with only the changes. Metrics come from metrics.k8s.io every `METRICS_INTERVAL`.
+Only the fields the UI needs stay in memory. The RBAC role needs the verbs `list` and `watch` on nodes and pods
+(see `deploy/rbac.yaml`); without `watch`, kube-ops-view lists nodes and pods every 10 seconds.
+
+Measured with a fake API (150 nodes, 6000 pods of about 10 KB each, 20 pod changes per second):
+
+| | Before (LIST every query) | Now (watch) |
+| --- | --- | --- |
+| Memory (RSS) | 906 MB, growing | 130 MB, stable |
+| API requests per minute | 39 (4 per query) | 8 (metrics) + rare watch reconnects |
+| Data from the API in 3 minutes | 1525 MB | 95 MB, most of it the first LIST |
+
 ## Multiple Clusters
 
 Multiple clusters are supported by passing a list of API servers, reading a kubeconfig file, or pointing to an HTTP Cluster Registry endpoint.
@@ -159,7 +174,8 @@ The following environment variables are supported:
 | `KUBECONFIG_PATH`        | Path to kubeconfig file to use for cluster access                                                  |
 | `KUBECONFIG_CONTEXTS`    | Comma separated list of contexts to use from kubeconfig                                            |
 | `CLUSTER_REGISTRY_URL`   | URL to cluster registry returning list of Kubernetes clusters                                      |
-| `QUERY_INTERVAL`         | Interval in seconds for querying clusters (default: 5)                                             |
+| `QUERY_INTERVAL`         | Interval in seconds for updating the UI data from the watch cache, no API requests (default: 5)   |
+| `METRICS_INTERVAL`       | Interval in seconds for querying metrics.k8s.io (default: 15, the metrics-server resolution)       |
 | `REDIS_URL`              | Optional Redis server for pub/sub when running multiple replicas. Example: `redis://my-redis:6379` |
 | `SERVER_PORT`            | HTTP port to listen on (default: `8080`)                                                           |
 | `DEBUG`                  | Set to "true" for debug logs and JavaScript cache busting in local development                     |

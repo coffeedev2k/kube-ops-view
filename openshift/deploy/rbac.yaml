@@ -14,6 +14,8 @@ rules:
     resources: ["nodes", "pods"]
     verbs:
       - list
+      # watch: one LIST, then only changes (fewer API requests); without it kube-ops-view lists every 10 s
+      - watch
   - apiGroups: ["metrics.k8s.io"]
     resources: ["nodes", "pods"]
     verbs:

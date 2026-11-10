@@ -26,15 +26,21 @@ const LOOP_SLEEP_JITTER_SECONDS: f64 = 1.0;
 
 #[derive(Clone, Copy)]
 pub enum ClusterQuery {
-    Kubernetes,
+    /// Cluster data from the watch-backed cache; metrics are polled every `metrics_interval`.
+    Kubernetes {
+        metrics_interval: Duration,
+    },
     Mock,
 }
 
 impl ClusterQuery {
-    async fn query(self, cluster: &Cluster) -> anyhow::Result<serde_json::Value> {
+    /// `None`: the cluster has no data yet (initial list in progress), not an error.
+    async fn query(self, cluster: &Cluster) -> anyhow::Result<Option<serde_json::Value>> {
         match self {
-            ClusterQuery::Kubernetes => query_kubernetes_cluster(cluster).await,
-            ClusterQuery::Mock => query_mock_cluster(cluster),
+            ClusterQuery::Kubernetes { metrics_interval } => {
+                query_kubernetes_cluster(cluster, metrics_interval).await
+            }
+            ClusterQuery::Mock => query_mock_cluster(cluster).map(Some),
         }
     }
 }
@@ -149,7 +155,14 @@ async fn update_cluster(
                 )
                 .await?;
         }
-        Ok(data) => {
+        Ok(None) => {
+            debug!(
+                "Cluster {} has no data yet (initial list in progress)",
+                cluster.id
+            );
+            return Ok(());
+        }
+        Ok(Some(data)) => {
             status.last_query_time = Some(now);
             if let Some(backoff) = status.backoff.take() {
                 info!(

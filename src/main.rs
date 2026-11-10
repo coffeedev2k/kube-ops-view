@@ -1,5 +1,6 @@
 //! Kubernetes Operational View - read-only system dashboard for multiple K8s clusters.
 
+mod cluster_cache;
 mod cluster_discovery;
 mod json_delta;
 mod kubernetes;
@@ -23,6 +24,11 @@ use tracing::{error, info};
 use crate::cluster_discovery::{ClusterDiscoverer, DEFAULT_CLUSTERS};
 use crate::store::Store;
 use crate::update::ClusterQuery;
+
+/// mimalloc returns freed memory to the OS better than glibc malloc after the large temporary
+/// allocations of each update (cluster data copy, delta), so RSS stays lower.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// Version string; the Docker build sets `KUBE_OPS_VIEW_VERSION` from the `VERSION` build argument.
 pub const VERSION: &str = match option_env!("KUBE_OPS_VIEW_VERSION") {
@@ -91,9 +97,13 @@ struct Cli {
     #[arg(long, env = "KUBECONFIG_CONTEXTS", value_delimiter = ',')]
     kubeconfig_contexts: Vec<String>,
 
-    /// Interval in seconds for querying clusters
+    /// Interval in seconds for updating the UI cluster data (from the watch cache, no API requests)
     #[arg(long, env = "QUERY_INTERVAL", default_value_t = 5.0)]
     query_interval: f64,
+
+    /// Interval in seconds for querying metrics.k8s.io (metrics-server resolution is 15 s by default)
+    #[arg(long, env = "METRICS_INTERVAL", default_value_t = 15.0)]
+    metrics_interval: f64,
 
     /// Template for target URL when clicking on a Node
     #[arg(long, env = "NODE_LINK_URL_TEMPLATE")]
@@ -181,17 +191,18 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         None => Store::memory(),
     });
 
+    let metrics_interval = Duration::from_secs_f64(cli.metrics_interval.max(1.0));
     let (discoverer, cluster_query) = if cli.mock {
         (ClusterDiscoverer::mock(), ClusterQuery::Mock)
     } else if let Some(url) = &cli.cluster_registry_url {
         (
             ClusterDiscoverer::registry(url, &cli.credentials_dir.clone().unwrap_or_default())?,
-            ClusterQuery::Kubernetes,
+            ClusterQuery::Kubernetes { metrics_interval },
         )
     } else if let Some(path) = &cli.kubeconfig_path {
         (
             ClusterDiscoverer::kubeconfig(path.clone(), non_empty(cli.kubeconfig_contexts.clone())),
-            ClusterQuery::Kubernetes,
+            ClusterQuery::Kubernetes { metrics_interval },
         )
     } else {
         let urls = non_empty(cli.clusters.clone());
@@ -200,7 +211,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         (
             ClusterDiscoverer::static_urls(&urls).await?,
-            ClusterQuery::Kubernetes,
+            ClusterQuery::Kubernetes { metrics_interval },
         )
     };
 

@@ -2,13 +2,15 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use kube::config::{KubeConfigOptions, Kubeconfig};
 use serde::Deserialize;
 use tracing::{error, info, warn};
+
+use crate::cluster_cache::{self, ClusterCache, ClusterWatches};
 
 /// Default URL points to kubectl proxy.
 pub const DEFAULT_CLUSTERS: &str = "http://localhost:8001/";
@@ -26,6 +28,37 @@ pub struct Cluster {
     pub api_server_url: String,
     /// `None` for mock clusters.
     pub client: Option<kube::Client>,
+    /// Watch-backed cache, started on the first query; dropping the cluster stops the watches.
+    watches: OnceLock<ClusterWatches>,
+}
+
+impl Cluster {
+    pub fn new(
+        id: String,
+        name: String,
+        api_server_url: String,
+        client: Option<kube::Client>,
+    ) -> Self {
+        Cluster {
+            id,
+            name,
+            api_server_url,
+            client,
+            watches: OnceLock::new(),
+        }
+    }
+
+    /// The watch-backed cache of this cluster; starts the watches on the first call.
+    pub fn cache(&self, metrics_interval: Duration) -> anyhow::Result<&ClusterCache> {
+        let client = self
+            .client
+            .as_ref()
+            .with_context(|| format!("cluster {} has no Kubernetes client", self.id))?;
+        let watches = self
+            .watches
+            .get_or_init(|| cluster_cache::start(&self.id, client.clone(), metrics_interval));
+        Ok(&watches.cache)
+    }
 }
 
 /// Generate some "cluster ID" from given API server URL.
@@ -76,34 +109,34 @@ impl ClusterDiscoverer {
                 Ok(config) => {
                     let url = config.cluster_url.to_string();
                     info!("Use in-cluster service account for {url}");
-                    Cluster {
-                        id: generate_cluster_id(&url),
-                        name: "cluster".to_string(),
-                        api_server_url: url,
-                        client: Some(kube_client(config)?),
-                    }
+                    Cluster::new(
+                        generate_cluster_id(&url),
+                        "cluster".to_string(),
+                        url,
+                        Some(kube_client(config)?),
+                    )
                 }
                 Err(e) => {
                     // we are not running inside a cluster => assume default kubectl proxy URL
                     info!("No in-cluster config ({e}), use kubectl proxy URL {DEFAULT_CLUSTERS}");
-                    Cluster {
-                        id: generate_cluster_id(DEFAULT_CLUSTERS),
-                        name: "cluster".to_string(),
-                        api_server_url: DEFAULT_CLUSTERS.to_string(),
-                        client: Some(kube_client(url_config(DEFAULT_CLUSTERS)?)?),
-                    }
+                    Cluster::new(
+                        generate_cluster_id(DEFAULT_CLUSTERS),
+                        "cluster".to_string(),
+                        DEFAULT_CLUSTERS.to_string(),
+                        Some(kube_client(url_config(DEFAULT_CLUSTERS)?)?),
+                    )
                 }
             };
             clusters.push(Arc::new(cluster));
         } else {
             for url in api_server_urls {
                 let id = generate_cluster_id(url);
-                clusters.push(Arc::new(Cluster {
-                    name: id.clone(),
+                clusters.push(Arc::new(Cluster::new(
+                    id.clone(),
                     id,
-                    api_server_url: url.clone(),
-                    client: Some(kube_client(url_config(url)?)?),
-                }));
+                    url.clone(),
+                    Some(kube_client(url_config(url)?)?),
+                )));
             }
         }
         Ok(ClusterDiscoverer::Static(clusters))
@@ -132,12 +165,12 @@ impl ClusterDiscoverer {
     pub fn mock() -> Self {
         let clusters = (0..MOCK_CLUSTER_COUNT)
             .map(|i| {
-                Arc::new(Cluster {
-                    id: format!("mock-cluster-{i}"),
-                    name: format!("mock-cluster-{i}"),
-                    api_server_url: format!("https://kube-{i}.example.org"),
-                    client: None,
-                })
+                Arc::new(Cluster::new(
+                    format!("mock-cluster-{i}"),
+                    format!("mock-cluster-{i}"),
+                    format!("https://kube-{i}.example.org"),
+                    None,
+                ))
             })
             .collect();
         ClusterDiscoverer::Mock(clusters)
@@ -268,12 +301,12 @@ impl RegistryDiscoverer {
             }
             let mut config = url_config(&row.api_server_url)?;
             config.auth_info.token = Some(token.clone().into());
-            clusters.push(Arc::new(Cluster {
-                id: row.id,
-                name: row.alias,
-                api_server_url: row.api_server_url,
-                client: Some(kube_client(config)?),
-            }));
+            clusters.push(Arc::new(Cluster::new(
+                row.id,
+                row.alias,
+                row.api_server_url,
+                Some(kube_client(config)?),
+            )));
         }
         let mut cache = self.cache.lock().unwrap();
         cache.clusters = clusters;
@@ -356,12 +389,12 @@ impl KubeconfigDiscoverer {
                         continue;
                     }
                 };
-            clusters.push(Arc::new(Cluster {
-                id: name.clone(),
-                name: name.clone(),
-                api_server_url: config.cluster_url.to_string(),
-                client: Some(kube_client(config)?),
-            }));
+            clusters.push(Arc::new(Cluster::new(
+                name.clone(),
+                name.clone(),
+                config.cluster_url.to_string(),
+                Some(kube_client(config)?),
+            )));
         }
         Ok(clusters)
     }
