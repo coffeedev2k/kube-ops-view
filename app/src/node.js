@@ -137,7 +137,8 @@ export const getAllNodePoolTypes = (labels) => {
  */
 export const getPoolColor = (poolType) => {
   const key = poolType.toLowerCase()
-  return key in POOL_COLORS ? POOL_COLORS[key] : POOL_COLORS['default']
+  const colors = App.current.theme.poolColors || POOL_COLORS
+  return key in colors ? colors[key] : colors['default']
 }
 
 /**
@@ -275,7 +276,7 @@ export class Node extends PIXI.Graphics {
     const availableTextRoom = roomForText - (indicatorWidth > 0 ? 3 : 0)
     const nodeName = (this.node && this.node.name) || ''
     const ellipsizedNodeName = nodeName.length > availableTextRoom ? nodeName.substring(0, availableTextRoom).concat('…') : nodeName
-    const text = new PIXI.Text({ text: ellipsizedNodeName, style: textStyle(10, 0x000000) })
+    const text = new PIXI.Text({ text: ellipsizedNodeName, style: textStyle(10, App.current.theme.handleTextColor) })
     text.x = 2
     text.y = 2
     topHandle.addChild(text)
@@ -301,8 +302,13 @@ export class Node extends PIXI.Graphics {
     nodeBox.addChild(topHandle)
     // Use pool color for node border if available
     nodeBox.rect(0, 0, this.widthOfNodePx, this.heightOfNodePx)
-    nodeBox.fill({ color: App.current.theme.secondaryColor })
-    nodeBox.stroke({ width: 2, color: handleColor })
+    if (App.current.theme.flat) {
+      // thin bright outline without fill
+      nodeBox.stroke({ width: 1, color: App.current.theme.nodeBorderColor || handleColor })
+    } else {
+      nodeBox.fill({ color: App.current.theme.secondaryColor })
+      nodeBox.stroke({ width: 2, color: handleColor })
+    }
     topHandle.interactive = true
     topHandle.on('mouseover', function () {
       const nodeLabels = (nodeBox.node && nodeBox.node.labels) || {}

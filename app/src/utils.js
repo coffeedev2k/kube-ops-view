@@ -1,4 +1,5 @@
 import * as PIXI from 'pixi.js'
+import App from './app.js'
 
 const FACTORS = {
   'n': 1 / 1000000000,
@@ -106,9 +107,10 @@ const TEXT_STYLES = new Map()
  * contain the style id, so a new style object per text makes the cache grow on each update.
  */
 export function textStyle(fontSize, fill) {
-  const key = fontSize + ':' + fill
+  const fontFamily = App.current.theme.fontFamily
+  const key = fontFamily + ':' + fontSize + ':' + fill
   if (!TEXT_STYLES.has(key)) {
-    TEXT_STYLES.set(key, new PIXI.TextStyle({ fontFamily: 'ShareTechMono', fontSize, fill }))
+    TEXT_STYLES.set(key, new PIXI.TextStyle({ fontFamily, fontSize, fill }))
   }
   return TEXT_STYLES.get(key)
 }

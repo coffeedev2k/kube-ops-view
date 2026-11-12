@@ -162,7 +162,7 @@ export default class Cluster extends PIXI.Graphics {
     }
     control.addChild(mark)
 
-    const label = new PIXI.Text({ text: 'collapse all', style: textStyle(10, 0x000000) })
+    const label = new PIXI.Text({ text: 'collapse all', style: textStyle(10, App.current.theme.handleTextColor) })
     label.x = 12
     label.y = 2
     control.addChild(label)
@@ -195,7 +195,7 @@ export default class Cluster extends PIXI.Graphics {
     const collapsedPoolCount = sortedPoolTypes.filter(poolType => App.current.isPoolCollapsed(clusterId, poolType)).length
 
     // Create top handle content first: its width sets the minimal cluster width
-    const handleText = new PIXI.Text({ text: ''.concat(this.cluster.api_server_url, ' (', this.cluster.id, ')'), style: textStyle(10, 0x000000) })
+    const handleText = new PIXI.Text({ text: ''.concat(this.cluster.api_server_url, ' (', this.cluster.id, ')'), style: textStyle(10, App.current.theme.handleTextColor) })
     handleText.x = 2
     handleText.y = 2
     const collapseAllControl = sortedPoolTypes.length > 0
@@ -419,8 +419,12 @@ export default class Cluster extends PIXI.Graphics {
     const poolHeaderWidth = Math.max(minClusterWidth - left * 2, overallMaxX - left) + 2
     for (const { header, color } of poolHeaders) {
       header.rect(-1, 0, poolHeaderWidth, poolHeaderHeight)
-      header.fill({ color: color, alpha: 0.3 })
-      header.stroke({ width: 1, color: color, alpha: 0.8 })
+      if (App.current.theme.flat) {
+        header.fill({ color: color })
+      } else {
+        header.fill({ color: color, alpha: 0.3 })
+        header.stroke({ width: 1, color: color, alpha: 0.8 })
+      }
       this.addChild(header)
     }
 
@@ -434,6 +438,9 @@ export default class Cluster extends PIXI.Graphics {
     const width = Math.max(minClusterWidth, overallMaxX + left)
     const height = Math.max(minClusterHeight, currentY - padding)
     this.rect(0, 0, width, height)
+    if (App.current.theme.clusterFillColor !== null) {
+      this.fill({ color: App.current.theme.clusterFillColor })
+    }
     this.stroke({ width: 2, color: App.current.theme.primaryColor })
     // the layout uses this; the "height" property walks all children
     this.drawnHeight = height

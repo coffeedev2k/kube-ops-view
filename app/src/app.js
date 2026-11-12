@@ -193,7 +193,9 @@ export default class App {
   }
 
   async initialize() {
-    App.current = this
+     App.current = this
+    window.kubeOpsView = this // debug: theme changes from the DevTools console
+
 
     // create the renderer (async in pixi.js 8.x)
     const noWebGL = this.config.renderer === 'canvas'
@@ -383,7 +385,7 @@ export default class App {
 
     const searchPrompt = new PIXI.Text({
       text: '>',
-      style: { fontFamily: 'ShareTechMono', fontSize: 14, fill: this.theme.primaryColor }
+      style: { fontFamily: this.theme.fontFamily, fontSize: 14, fill: this.theme.primaryColor }
     })
     searchPrompt.x = 26
     searchPrompt.y = 8
@@ -393,7 +395,7 @@ export default class App {
     })
     this.stage.addChild(searchPrompt)
 
-    const searchText = new PIXI.Text({ text: '', style: { fontFamily: 'ShareTechMono', fontSize: 14, fill: this.theme.primaryColor } })
+    const searchText = new PIXI.Text({ text: '', style: { fontFamily: this.theme.fontFamily, fontSize: 14, fill: this.theme.primaryColor } })
     searchText.x = 40
     searchText.y = 8
     this.stage.addChild(searchText)

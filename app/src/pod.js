@@ -274,33 +274,48 @@ export class Pod extends PIXI.Graphics {
     let newTick = null
 
     const podBox = this
+    const theme = App.current.theme
     // Draw container cells
     const w = 10 / this.pod.containers.length
-    for (let i = 0; i < this.pod.containers.length; i++) {
-      podBox.rect(i * w, 0, w, 10)
-      podBox.stroke({ width: 1, color: App.current.theme.primaryColor })
+    if (!theme.flat) {
+      for (let i = 0; i < this.pod.containers.length; i++) {
+        podBox.rect(i * w, 0, w, 10)
+        podBox.stroke({ width: 1, color: theme.primaryColor })
+      }
     }
     let color
     if (this.pod.phase == 'Succeeded') {
       // completed Job
-      color = 0xaaaaff
+      color = theme.podColors.succeeded
     } else if (this.pod.phase == 'Running' && allReady) {
-      color = 0xaaffaa
+      color = theme.podColors.running
     } else if (this.pod.phase == 'Running' && allRunning && !allReady) {
       // all containers running, but some not ready (readinessProbe)
       newTick = this.pulsate
-      color = 0xaaffaa
+      color = theme.podColors.running
     } else if (this.pod.phase == 'Pending') {
       newTick = this.pulsate
-      color = 0xffffaa
+      color = theme.podColors.pending
     } else {
       // CrashLoopBackOff, ImagePullBackOff or other unknown state
       newTick = this.crashing
-      color = 0xffaaaa
+      color = theme.podColors.failed
     }
     podBox.rect(0, 0, 10, 10)
-    podBox.fill({ color: color, alpha: 0.2 })
-    podBox.stroke({ width: 2, color: color })
+    if (theme.flat) {
+      // thin bright outline without fill; dim lines separate the containers
+      podBox.stroke({ width: 1, color: color })
+      for (let i = 1; i < this.pod.containers.length; i++) {
+        podBox.moveTo(i * w, 0)
+        podBox.lineTo(i * w, 10)
+      }
+      if (this.pod.containers.length > 1) {
+        podBox.stroke({ width: 1, color: color, alpha: 0.4 })
+      }
+    } else {
+      podBox.fill({ color: color, alpha: 0.2 })
+      podBox.stroke({ width: 2, color: color })
+    }
     if (this.pod.deleted) {
       if (!this.cross) {
         const cross = new PIXI.Graphics()

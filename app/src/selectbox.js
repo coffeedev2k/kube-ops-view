@@ -20,7 +20,7 @@ export default class SelectBox extends PIXI.Graphics {
     this.text = new PIXI.Text({
       text: this.items[this.count].text,
       style: {
-        fontFamily: 'ShareTechMono',
+        fontFamily: App.current.theme.fontFamily,
         fontSize: 14,
         fill: App.current.theme.primaryColor,
         align: 'center'

@@ -5,7 +5,7 @@ export default class Tooltip extends PIXI.Graphics {
   constructor() {
     super()
     this.allowChildren = true
-    this.text = new PIXI.Text({ text: '', style: { fontFamily: 'ShareTechMono', fontSize: 12, fill: 0xffffff } })
+    this.text = new PIXI.Text({ text: '', style: { fontFamily: App.current.theme.fontFamily, fontSize: 12, fill: 0xffffff } })
     this.text.x = 4
     this.text.y = 4
     this.addChild(this.text)
@@ -18,6 +18,8 @@ export default class Tooltip extends PIXI.Graphics {
   }
 
   draw() {
+    // the tooltip lives across theme switches
+    this.text.style.fontFamily = App.current.theme.fontFamily
     this.clear()
     this.rect(0, 0, this.text.width + 8, this.text.height + 8)
     this.fill({ color: App.current.theme.secondaryColor, alpha: 0.8 })

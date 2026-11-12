@@ -12,11 +12,25 @@ export class Theme {
   }
 }
 
-class DefaultTheme {
+// The original kube-ops-view look; the base class of all themes
+class ClassicTheme {
   constructor() {
-    this.name = 'default'
+    this.name = 'classic'
     this.primaryColor = 0xaaaaff
     this.secondaryColor = 0x222233
+    // style values for the drawing code; other themes change only what they need
+    this.fontFamily = 'ShareTechMono'
+    // flat: pods and nodes as thin bright outlines without fill; solid pool headers
+    this.flat = false
+    // node outline color in the flat style; null: pool color
+    this.nodeBorderColor = null
+    // text on the colored top handles of clusters and nodes
+    this.handleTextColor = 0x000000
+    this.podColors = { succeeded: 0xaaaaff, running: 0xaaffaa, pending: 0xffffaa, failed: 0xffaaaa }
+    // null: use POOL_COLORS from node.js
+    this.poolColors = null
+    // null: the cluster box has no fill
+    this.clusterFillColor = null
   }
   apply(stage) {
     stage.filters = []
@@ -25,9 +39,56 @@ class DefaultTheme {
     ALL_THEMES[this.name] = this
   }
 }
-new DefaultTheme().register()
+new ClassicTheme().register()
 
-class GreenTheme extends DefaultTheme {
+// Flat design like the Windows Phone "Metro" tiles: black background, solid tiles, white text.
+// Name "default": users without a saved choice and users with the saved choice "default" get it.
+class FlatTheme extends ClassicTheme {
+  constructor() {
+    super()
+    this.name = 'default'
+    this.primaryColor = 0xf0ff00 // yellow
+    this.secondaryColor = 0x1f1f1f
+    this.fontFamily = ['Segoe UI', 'Selawik', 'Open Sans', 'Noto Sans', 'Helvetica Neue', 'Arial', 'sans-serif']
+    this.flat = true
+    this.handleTextColor = 0xffffff
+    this.nodeBorderColor = 0xf0ff00 // yellow
+    // running: cyan; the other states keep their signal colors
+    // this.podColors = { succeeded: 0x647687, running: 0x1ba1e2, pending: 0xf0a30a, failed: 0xff2a1a }
+    this.poolColors = {
+      'master': 0xd80073,
+      'control-plane': 0xd80073,
+      'infra': 0xfa6800,
+      'infrastructure': 0xfa6800,
+      'monitoring': 0xaa00ff,
+      'worker': 0x00aba9,
+      'compute': 0x00aba9,
+      'default': 0x00aba9
+    }
+    this.clusterFillColor = 0x000000
+  }
+}
+new FlatTheme().register()
+
+// Flat theme variants in the Nokia Lumia colors; running pods are white
+class FlatVariantTheme extends FlatTheme {
+  constructor(name, clusterFillColor, nodeBorderColor, primaryColor) {
+    super()
+    this.name = name
+    this.clusterFillColor = clusterFillColor
+    this.nodeBorderColor = nodeBorderColor
+    this.primaryColor = primaryColor
+    this.podColors = { ...this.podColors, running: 0xffffff }
+  }
+}
+// graphite background, cyan node borders, magenta accent
+new FlatVariantTheme('lumia-cyan', 0x161616, 0x00b7c3, 0xe3008c).register()
+// dark grey background, teal node borders, orange accent
+new FlatVariantTheme('lumia-orange', 0x1b1b1b, 0x00aba9, 0xff8c00).register()
+// dark blue background, lime node borders, Windows Phone blue accent
+new FlatVariantTheme('lumia-green', 0x14213d, 0x7fba00, 0x0078d7).register()
+
+class GreenTheme extends ClassicTheme {
   constructor() {
     super()
     this.name = 'green'
@@ -37,7 +98,7 @@ class GreenTheme extends DefaultTheme {
 }
 new GreenTheme().register()
 
-class GreyTheme extends DefaultTheme {
+class GreyTheme extends ClassicTheme {
   constructor() {
     super()
     this.name = 'grey'
@@ -47,7 +108,7 @@ class GreyTheme extends DefaultTheme {
 }
 new GreyTheme().register()
 
-class BlackAndWhiteTheme extends DefaultTheme {
+class BlackAndWhiteTheme extends ClassicTheme {
   constructor() {
     super()
     this.name = 'blackandwhite'
@@ -62,7 +123,7 @@ class BlackAndWhiteTheme extends DefaultTheme {
 }
 new BlackAndWhiteTheme().register()
 
-class SepiaTheme extends DefaultTheme {
+class SepiaTheme extends ClassicTheme {
   constructor() {
     super()
     this.name = 'sepia'
@@ -75,7 +136,7 @@ class SepiaTheme extends DefaultTheme {
 }
 new SepiaTheme().register()
 
-class PolaroidTheme extends DefaultTheme {
+class PolaroidTheme extends ClassicTheme {
   constructor() {
     super()
     this.name = 'polaroid'
@@ -88,7 +149,7 @@ class PolaroidTheme extends DefaultTheme {
 }
 new PolaroidTheme().register()
 
-class HighContrastTheme extends DefaultTheme {
+class HighContrastTheme extends ClassicTheme {
   constructor() {
     super()
     this.name = 'highcontrast'
@@ -103,7 +164,7 @@ class HighContrastTheme extends DefaultTheme {
 }
 new HighContrastTheme().register()
 
-class CRTTheme extends DefaultTheme {
+class CRTTheme extends ClassicTheme {
   constructor() {
     super()
     this.name = 'crt'
