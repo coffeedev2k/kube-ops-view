@@ -102,6 +102,8 @@ export class Pod extends PIXI.Graphics {
   /** Register the event listeners once: draw() runs on each update and must not add them again. */
   addListeners() {
     this.interactive = true
+    // the whole pod box reacts to the mouse: without a fill (flat themes) the graphics hit only the outline
+    this.hitArea = new PIXI.Rectangle(0, 0, 10, 10)
     this.on('mouseover', function () {
       this.filters = this.filters.filter(x => x != BRIGHTNESS_FILTER).concat([BRIGHTNESS_FILTER])
       this.tooltip.setText(this.tooltipText())
